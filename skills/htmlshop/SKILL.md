@@ -1,6 +1,6 @@
 ---
 name: htmlshop
-description: Create and visually edit HTML design files such as social posts, carousels, hero graphics, or any 2D layout. Use when the user says "/htmlshop", asks to create a design, design a carousel, make an Instagram post, tweak a generated HTML file visually, or references their design system or brand. Also triggers on "open htmlshop", "open the editor", "launch the design tool". Works from Claude Code, Cursor, or any LLM coding tool.
+description: Create and visually edit HTML design files such as social posts, carousels, hero graphics, or any 2D layout. Use when the user says "/htmlshop", asks to create a design, design a carousel, make an Instagram post, tweak a generated HTML file visually, or references their design system or brand. Also triggers on "open htmlshop", "open the editor", "launch the design tool". Works from Codex, Claude Code, Cursor, or any LLM coding tool.
 ---
 
 # htmlshop
@@ -33,7 +33,7 @@ When the user asks for a new design in natural language, like *"/htmlshop create
 
 3. Write the HTML. Constraints:
    - One `.html` file. All CSS inline in a `<style>` block. No external JS.
-   - Fixed dimensions: `body { width: Xpx; height: Ypx; margin: 0 }`. Common sizes: 1080×1080, 1080×1350, 1920×1080.
+   - Fixed dimensions: `body { width: Xpx; height: Ypx; margin: 0; position: relative; overflow: hidden }`. Common sizes: 1080×1080, 1080×1350, 1920×1080.
    - Google Fonts via `<link>` is fine. Otherwise use system-ui.
    - Don't reference external images unless the user gave you URLs, or put local files at `assets/*` relative to the HTML.
    - Follow the design system's typography, colors, and tokens if one exists.
@@ -46,7 +46,7 @@ When the user asks for a new design in natural language, like *"/htmlshop create
    npx htmlshop ~/htmlshop/projects/<slug>
    ```
 
-   Use `run_in_background`. `npx htmlshop` with no path works if you wrote a standalone design at the top of `projects/`.
+   Use your tool's background process mode when available. `npx htmlshop` with no path works if you wrote a standalone design at the top of `projects/`.
 
 6. Tell the user the URL the command prints (usually `http://localhost:5178`). Mention that edits autosave and that they can add more slides from inside the editor with `+ Artboard`.
 
@@ -66,12 +66,13 @@ If the user just wants to open what they already have ("open htmlshop", "edit my
 - Properties panel on the right: text + B/I/U, typography with a font-family dropdown auto-filled from your designs + web standards, layout (display, position, dimensions, overflow, visibility), background (color picker + shorthand for gradients), border + effects + blend modes.
 - ⌘Z / ⌘⇧Z undo per stage (100 steps). Zoom with ⌘− / ⌘+ / ⌘0.
 - `+ Artboard` adds a new slide next to the open one(s).
+- Rename/Delete in the toolbar renames or removes the active artboard file.
 - `+ Image` uploads to `<folder>/assets/` and places it.
 - Export: pick PNG/JPG, 1×/2×/3×, this design or all slides, save location (via the browser File System Access API when available).
 
 ## Notes
 
-- Always launch the editor with `run_in_background`. `npx htmlshop` doesn't return until the user closes it.
+- Always launch the editor in the background when your tool supports it. `npx htmlshop` doesn't return until the user closes it.
 - Users may have live edits when they come back to you. Don't overwrite files without confirmation if you're regenerating.
 - If the user says "change", "update", or "tweak" something that already exists, edit the file. Don't create a new one.
 - Keep generated HTML in a single file. Don't split CSS out — the editor serializes everything back to one file on save.

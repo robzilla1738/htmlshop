@@ -2,11 +2,13 @@ const groupsEl = document.getElementById('groups')
 const count = document.getElementById('count')
 const empty = document.getElementById('empty')
 const hint = document.getElementById('hint')
+const rootPathEl = document.getElementById('root-path')
 const newFolderBtn = document.getElementById('new-folder')
 const newDesignBtn = document.getElementById('new-design')
 
 let files = []
 let folders = []
+let rootPath = ''
 
 // Scale each card's preview iframe so the design fills the card.
 // The design's natural size is read from its body on load, then scaled.
@@ -23,14 +25,18 @@ const previewObserver = new ResizeObserver((entries) => {
 function sizePreview(frame, iframe) {
   const doc = iframe.contentDocument
   if (!doc || !doc.body) return
-  const w = doc.body.scrollWidth || doc.body.offsetWidth || 1080
-  const h = doc.body.scrollHeight || doc.body.offsetHeight || 1080
+  const cs = iframe.contentWindow.getComputedStyle(doc.body)
+  const declaredW = parseFloat(cs.width)
+  const declaredH = parseFloat(cs.height)
+  const w = (isFinite(declaredW) && declaredW > 0) ? declaredW
+    : (doc.body.scrollWidth || doc.body.offsetWidth || 1080)
+  const h = (isFinite(declaredH) && declaredH > 0) ? declaredH
+    : (doc.body.scrollHeight || doc.body.offsetHeight || 1080)
   iframe.style.width = w + 'px'
   iframe.style.height = h + 'px'
   iframe.dataset.naturalW = w
   iframe.dataset.naturalH = h
   frame.style.aspectRatio = `${w} / ${h}`
-  // Trigger a rescale immediately (observer will also fire on next layout)
   const cardW = frame.clientWidth
   if (cardW > 0) iframe.style.transform = `scale(${cardW / w})`
 }
@@ -38,49 +44,47 @@ function sizePreview(frame, iframe) {
 await refresh()
 
 newFolderBtn.addEventListener('click', async () => {
-  const name = prompt('New carousel name:')
-  if (!name || !name.trim()) return
-  const folderName = name.trim()
+  const folderName = await promptText({
+    title: 'New carousel',
+    label: 'Carousel folder name',
+    placeholder: 'apologetics-series',
+    confirmText: 'Create'
+  })
+  if (!folderName) return
 
-  const folderRes = await fetch('/api/folders', {
+  const folderRes = await api('/api/folders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: folderName })
   })
-  const folderJson = await folderRes.json()
   if (!folderRes.ok) {
-    alert('Could not create folder: ' + (folderJson.error || 'unknown'))
+    toast('Could not create folder: ' + folderRes.error)
     return
   }
 
   // Auto-create a blank first slide and jump straight into the editor.
-  const designRes = await fetch('/api/new-design', {
+  const designRes = await api('/api/new-design', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder: folderJson.path })
+    body: JSON.stringify({ folder: folderRes.data.path })
   })
-  const designJson = await designRes.json()
   if (!designRes.ok) {
-    alert('Folder created, but could not create first slide: ' + (designJson.error || 'unknown'))
+    toast('Folder created, but could not create first slide: ' + designRes.error)
     await refresh()
     return
   }
 
-  location.href = `/editor?file=${encodeURIComponent(designJson.path)}`
+  location.href = `/editor?file=${encodeURIComponent(designRes.data.path)}`
 })
 
 newDesignBtn.addEventListener('click', async () => {
-  const res = await fetch('/api/new-design', {
+  const res = await api('/api/new-design', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folder: '' })
   })
-  const json = await res.json()
   if (!res.ok) {
-    alert('Could not create design: ' + (json.error || 'unknown'))
+    toast('Could not create design: ' + res.error)
     return
   }
-  location.href = `/editor?file=${encodeURIComponent(json.path)}`
+  location.href = `/editor?file=${encodeURIComponent(res.data.path)}`
 })
 
 document.addEventListener('click', (e) => {
@@ -90,16 +94,28 @@ document.addEventListener('click', (e) => {
 })
 
 async function refresh() {
-  ;[files, folders] = await Promise.all([
-    fetch('/api/files').then((r) => r.json()),
-    fetch('/api/folders').then((r) => r.json())
+  const [filesRes, foldersRes, rootRes] = await Promise.all([
+    api('/api/files'),
+    api('/api/folders'),
+    api('/api/root')
   ])
+  if (!filesRes.ok || !foldersRes.ok) {
+    toast('Could not load designs.')
+    return
+  }
+  files = filesRes.data
+  folders = foldersRes.data
+  rootPath = rootRes.ok ? rootRes.data.root : ''
   render()
 }
 
 function render() {
   groupsEl.innerHTML = ''
   count.textContent = `${files.length} design${files.length === 1 ? '' : 's'}`
+  if (rootPathEl) {
+    rootPathEl.textContent = rootPath
+    rootPathEl.title = rootPath
+  }
 
   const byDir = new Map()
   byDir.set('', [])
@@ -114,13 +130,10 @@ function render() {
     Array.from(byDir.keys()).filter((d) => d !== '').sort((a, b) => a.localeCompare(b))
   )
 
-  let rendered = 0
   for (const dir of order) {
     const items = byDir.get(dir) || []
     if (dir === '' && !items.length) continue
-    const section = buildGroup(dir, items)
-    groupsEl.appendChild(section)
-    rendered += items.length
+    groupsEl.appendChild(buildGroup(dir, items))
   }
 
   const hasContent = files.length > 0 || folders.length > 0
@@ -153,7 +166,8 @@ function buildGroup(dir, items) {
   if (dir !== '' && items.length >= 2) {
     const carouselBtn = document.createElement('button')
     carouselBtn.className = 'tb tb-wide group-carousel'
-    carouselBtn.textContent = `Open as carousel →`
+    carouselBtn.textContent = 'Open as carousel'
+    carouselBtn.title = 'Open all designs in this folder'
     carouselBtn.addEventListener('click', () => {
       const qs = items.map((i) => encodeURIComponent(i.path)).join(',')
       location.href = `/editor?files=${qs}`
@@ -162,8 +176,7 @@ function buildGroup(dir, items) {
   }
 
   if (dir !== '') {
-    const folderMenu = buildFolderMenu(dir, items.length)
-    header.appendChild(folderMenu)
+    header.appendChild(buildFolderMenu(dir, items.length))
   }
 
   section.appendChild(header)
@@ -187,17 +200,15 @@ function buildGroup(dir, items) {
 }
 
 async function createDesignInFolder(folder) {
-  const res = await fetch('/api/new-design', {
+  const res = await api('/api/new-design', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folder })
   })
-  const json = await res.json()
   if (!res.ok) {
-    alert('Could not create design: ' + (json.error || 'unknown'))
+    toast('Could not create design: ' + res.error)
     return
   }
-  location.href = `/editor?file=${encodeURIComponent(json.path)}`
+  location.href = `/editor?file=${encodeURIComponent(res.data.path)}`
 }
 
 function buildCard(f) {
@@ -212,6 +223,7 @@ function buildCard(f) {
   iframe.src = `/files/${encodePath(f.path)}`
   iframe.loading = 'lazy'
   iframe.tabIndex = -1
+  iframe.title = f.name
   frame.appendChild(iframe)
   previewObserver.observe(frame)
 
@@ -224,12 +236,10 @@ function buildCard(f) {
     sizePreview(frame, iframe)
     const w = iframe.dataset.naturalW
     const h = iframe.dataset.naturalH
-    if (w && h) label.textContent = `${f.name}  ·  ${w} × ${h}`
+    if (w && h) label.textContent = `${f.name}  ·  ${w} x ${h}`
   })
 
-  const menu = buildCardMenu(f)
-
-  card.appendChild(menu)
+  card.appendChild(buildCardMenu(f))
   card.appendChild(frame)
   card.appendChild(label)
   return card
@@ -241,8 +251,9 @@ function buildCardMenu(f) {
 
   const btn = document.createElement('button')
   btn.className = 'card-menu-btn'
-  btn.textContent = '⋯'
+  btn.textContent = '...'
   btn.title = 'Actions'
+  btn.setAttribute('aria-label', `Actions for ${f.name}`)
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -257,65 +268,91 @@ function buildCardMenu(f) {
     e.stopPropagation()
   })
 
-  pop.appendChild(menuItem('Move to…', () => {
+  pop.appendChild(menuItem('Move to...', () => {
     wrap.classList.remove('open')
     showMoveDialog(f)
   }))
   pop.appendChild(menuItem('Duplicate', async () => {
     wrap.classList.remove('open')
-    const res = await fetch(`/api/file?path=${encodeURIComponent(f.path)}`)
-    if (!res.ok) return
-    const { content } = await res.json()
-    // Create a new sibling, then overwrite with current content
-    const dir = f.path.split('/').slice(0, -1).join('/')
-    const createRes = await fetch('/api/new-design', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder: dir })
-    })
-    const createJson = await createRes.json()
-    if (!createRes.ok) return
-    await fetch(`/api/file?path=${encodeURIComponent(createJson.path)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content })
-    })
-    await refresh()
+    await duplicateFile(f)
   }))
-  pop.appendChild(menuItem('Rename…', async () => {
+  pop.appendChild(menuItem('Rename...', async () => {
     wrap.classList.remove('open')
-    const current = f.path.split('/').pop()
-    const next = prompt('Rename to:', current)
-    if (!next || next === current) return
-    const dir = f.path.split('/').slice(0, -1).join('/')
-    const newPath = dir ? `${dir}/${next}` : next
-    const res = await fetch('/api/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: f.path, to: newPath })
-    })
-    const json = await res.json()
-    if (!res.ok) {
-      alert('Rename failed: ' + (json.error || 'unknown'))
-      return
-    }
-    await refresh()
+    await renameFile(f)
   }))
   pop.appendChild(menuItem('Delete', async () => {
     wrap.classList.remove('open')
-    if (!confirm(`Delete "${f.path}"? This cannot be undone.`)) return
-    const res = await fetch(`/api/file?path=${encodeURIComponent(f.path)}`, { method: 'DELETE' })
-    const json = await res.json()
-    if (!res.ok) {
-      alert('Delete failed: ' + (json.error || 'unknown'))
-      return
-    }
-    await refresh()
+    await deleteFile(f)
   }, 'danger'))
 
   wrap.appendChild(btn)
   wrap.appendChild(pop)
   return wrap
+}
+
+async function duplicateFile(f) {
+  const readRes = await api(`/api/file?path=${encodeURIComponent(f.path)}`)
+  if (!readRes.ok) {
+    toast('Duplicate failed: ' + readRes.error)
+    return
+  }
+  const dir = f.path.split('/').slice(0, -1).join('/')
+  const createRes = await api('/api/new-design', {
+    method: 'POST',
+    body: JSON.stringify({ folder: dir })
+  })
+  if (!createRes.ok) {
+    toast('Duplicate failed: ' + createRes.error)
+    return
+  }
+  const writeRes = await api(`/api/file?path=${encodeURIComponent(createRes.data.path)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content: readRes.data.content })
+  })
+  if (!writeRes.ok) {
+    toast('Duplicate failed: ' + writeRes.error)
+    return
+  }
+  toast('Duplicated design.', 'success')
+  await refresh()
+}
+
+async function renameFile(f) {
+  const current = f.path.split('/').pop()
+  const next = await promptText({
+    title: 'Rename design',
+    label: 'File name',
+    value: current,
+    confirmText: 'Rename'
+  })
+  if (!next || next === current) return
+  const dir = f.path.split('/').slice(0, -1).join('/')
+  const newPath = dir ? `${dir}/${next}` : next
+  const res = await api('/api/move', {
+    method: 'POST',
+    body: JSON.stringify({ from: f.path, to: newPath })
+  })
+  if (!res.ok) {
+    toast('Rename failed: ' + res.error)
+    return
+  }
+  await refresh()
+}
+
+async function deleteFile(f) {
+  const ok = await confirmDialog({
+    title: 'Delete design',
+    message: `Delete "${f.path}"? This cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true
+  })
+  if (!ok) return
+  const res = await api(`/api/file?path=${encodeURIComponent(f.path)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    toast('Delete failed: ' + res.error)
+    return
+  }
+  await refresh()
 }
 
 function buildFolderMenu(dir, fileCount) {
@@ -324,8 +361,9 @@ function buildFolderMenu(dir, fileCount) {
 
   const btn = document.createElement('button')
   btn.className = 'card-menu-btn'
-  btn.textContent = '⋯'
+  btn.textContent = '...'
   btn.title = 'Folder actions'
+  btn.setAttribute('aria-label', `Actions for folder ${dir}`)
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -341,48 +379,61 @@ function buildFolderMenu(dir, fileCount) {
     wrap.classList.remove('open')
     createDesignInFolder(dir)
   }))
-  pop.appendChild(menuItem('Rename folder…', async () => {
+  pop.appendChild(menuItem('Rename folder...', async () => {
     wrap.classList.remove('open')
-    const parts = dir.split('/')
-    const current = parts[parts.length - 1]
-    const next = prompt('Rename folder to:', current)
-    if (!next || next === current) return
-    const parent = parts.slice(0, -1).join('/')
-    const newPath = parent ? `${parent}/${next}` : next
-    const res = await fetch('/api/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: dir, to: newPath })
-    })
-    const json = await res.json()
-    if (!res.ok) {
-      alert('Rename failed: ' + (json.error || 'unknown'))
-      return
-    }
-    await refresh()
+    await renameFolder(dir)
   }))
-  pop.appendChild(menuItem('Delete folder', async () => {
+  pop.appendChild(menuItem('Delete empty folder', async () => {
     wrap.classList.remove('open')
-    const msg = fileCount > 0
-      ? `Delete folder "${dir}" and all ${fileCount} design${fileCount === 1 ? '' : 's'} inside? This cannot be undone.`
-      : `Delete empty folder "${dir}"?`
-    if (!confirm(msg)) return
-    const res = await fetch(`/api/file?path=${encodeURIComponent(dir)}`, { method: 'DELETE' })
-    const json = await res.json()
-    if (!res.ok) {
-      if (json.error === 'folder is not empty') {
-        alert(`Folder "${dir}" isn't empty. Move or delete the designs inside first.`)
-      } else {
-        alert('Delete failed: ' + (json.error || 'unknown'))
-      }
-      return
-    }
-    await refresh()
+    await deleteFolder(dir, fileCount)
   }, 'danger'))
 
   wrap.appendChild(btn)
   wrap.appendChild(pop)
   return wrap
+}
+
+async function renameFolder(dir) {
+  const parts = dir.split('/')
+  const current = parts[parts.length - 1]
+  const next = await promptText({
+    title: 'Rename folder',
+    label: 'Folder name',
+    value: current,
+    confirmText: 'Rename'
+  })
+  if (!next || next === current) return
+  const parent = parts.slice(0, -1).join('/')
+  const newPath = parent ? `${parent}/${next}` : next
+  const res = await api('/api/move', {
+    method: 'POST',
+    body: JSON.stringify({ from: dir, to: newPath })
+  })
+  if (!res.ok) {
+    toast('Rename failed: ' + res.error)
+    return
+  }
+  await refresh()
+}
+
+async function deleteFolder(dir, fileCount) {
+  if (fileCount > 0) {
+    toast(`Folder "${dir}" is not empty. Move or delete its designs first.`)
+    return
+  }
+  const ok = await confirmDialog({
+    title: 'Delete folder',
+    message: `Delete empty folder "${dir}"?`,
+    confirmText: 'Delete',
+    danger: true
+  })
+  if (!ok) return
+  const res = await api(`/api/file?path=${encodeURIComponent(dir)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    toast('Delete failed: ' + res.error)
+    return
+  }
+  await refresh()
 }
 
 function menuItem(label, handler, extraCls = '') {
@@ -394,14 +445,10 @@ function menuItem(label, handler, extraCls = '') {
 }
 
 function showMoveDialog(f) {
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-
-  const modal = document.createElement('div')
-  modal.className = 'modal'
-  modal.innerHTML = `
-    <div class="modal-head">Move "${escapeHtml(f.name)}"</div>
-    <div class="modal-body">
+  const restoreFocus = document.activeElement
+  const overlay = createModal({
+    title: `Move "${f.name}"`,
+    body: `
       <div class="modal-section-title">Choose destination</div>
       <div class="folder-picker"></div>
       <div class="modal-section-title">Or create new folder</div>
@@ -409,12 +456,12 @@ function showMoveDialog(f) {
         <input type="text" placeholder="folder name" id="new-folder-input">
         <button class="tb" id="new-folder-go">Create &amp; move</button>
       </div>
-    </div>
-    <div class="modal-foot">
-      <button class="tb" id="cancel-move">Cancel</button>
-    </div>
-  `
+    `,
+    footer: '<button class="tb" data-modal-cancel>Cancel</button>',
+    restoreFocus
+  })
 
+  const modal = overlay.querySelector('.modal')
   const picker = modal.querySelector('.folder-picker')
   const destinations = ['', ...folders]
   const currentDir = f.path.split('/').slice(0, -1).join('/')
@@ -424,8 +471,8 @@ function showMoveDialog(f) {
     row.className = 'folder-option'
     row.textContent = dest === '' ? '(standalone / root)' : dest
     row.addEventListener('click', async () => {
-      await doMove(f, dest)
-      overlay.remove()
+      const moved = await doMove(f, dest)
+      if (moved) closeModal(overlay, restoreFocus)
     })
     picker.appendChild(row)
   }
@@ -433,46 +480,155 @@ function showMoveDialog(f) {
     picker.innerHTML = '<div class="muted" style="padding:6px 0">No other folders. Create one below.</div>'
   }
 
-  modal.querySelector('#cancel-move').addEventListener('click', () => overlay.remove())
   modal.querySelector('#new-folder-go').addEventListener('click', async () => {
     const input = modal.querySelector('#new-folder-input')
     const val = input.value.trim()
     if (!val) return
-    const res = await fetch('/api/folders', {
+    const res = await api('/api/folders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: val })
     })
-    const json = await res.json()
     if (!res.ok) {
-      alert('Folder creation failed: ' + (json.error || 'unknown'))
+      toast('Folder creation failed: ' + res.error)
       return
     }
-    await doMove(f, json.path)
-    overlay.remove()
+    const moved = await doMove(f, res.data.path)
+    if (moved) closeModal(overlay, restoreFocus)
   })
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove()
-  })
-  overlay.appendChild(modal)
-  document.body.appendChild(overlay)
   modal.querySelector('#new-folder-input')?.focus()
 }
 
 async function doMove(f, destDir) {
   const name = f.path.split('/').pop()
   const to = destDir ? `${destDir}/${name}` : name
-  const res = await fetch('/api/move', {
+  const res = await api('/api/move', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: f.path, to })
   })
-  const json = await res.json()
   if (!res.ok) {
-    alert('Move failed: ' + (json.error || 'unknown'))
-    return
+    toast('Move failed: ' + res.error)
+    return false
   }
   await refresh()
+  return true
+}
+
+async function api(url, options = {}) {
+  try {
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { ok: false, error: data.error || res.statusText || 'unknown error' }
+    return { ok: true, data }
+  } catch (err) {
+    return { ok: false, error: err.message || 'network error' }
+  }
+}
+
+function promptText({ title, label, value = '', placeholder = '', confirmText = 'OK' }) {
+  const restoreFocus = document.activeElement
+  const overlay = createModal({
+    title,
+    body: `
+      <label class="dialog-field">
+        <span>${escapeHtml(label)}</span>
+        <input id="dialog-input" type="text" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder)}">
+      </label>
+    `,
+    footer: `
+      <button class="tb" data-modal-cancel>Cancel</button>
+      <button class="tb tb-primary" id="dialog-confirm">${escapeHtml(confirmText)}</button>
+    `,
+    restoreFocus
+  })
+  const input = overlay.querySelector('#dialog-input')
+  const confirm = overlay.querySelector('#dialog-confirm')
+
+  return new Promise((resolve) => {
+    const finish = (val) => {
+      closeModal(overlay, restoreFocus)
+      resolve(val)
+    }
+    confirm.addEventListener('click', () => finish(input.value.trim()))
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        finish(input.value.trim())
+      }
+    })
+    overlay.addEventListener('modal-cancel', () => resolve(null), { once: true })
+    input.focus()
+    input.select()
+  })
+}
+
+function confirmDialog({ title, message, confirmText = 'OK', danger = false }) {
+  const restoreFocus = document.activeElement
+  const overlay = createModal({
+    title,
+    body: `<p class="dialog-message">${escapeHtml(message)}</p>`,
+    footer: `
+      <button class="tb" data-modal-cancel>Cancel</button>
+      <button class="tb ${danger ? 'tb-danger' : 'tb-primary'}" id="dialog-confirm">${escapeHtml(confirmText)}</button>
+    `,
+    restoreFocus
+  })
+
+  return new Promise((resolve) => {
+    overlay.querySelector('#dialog-confirm').addEventListener('click', () => {
+      closeModal(overlay, restoreFocus)
+      resolve(true)
+    })
+    overlay.addEventListener('modal-cancel', () => resolve(false), { once: true })
+    overlay.querySelector('[data-modal-cancel]')?.focus()
+  })
+}
+
+function createModal({ title, body, footer, restoreFocus }) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head" id="modal-title">${escapeHtml(title)}</div>
+      <div class="modal-body">${body}</div>
+      <div class="modal-foot">${footer}</div>
+    </div>
+  `
+  const cancel = () => {
+    overlay.dispatchEvent(new CustomEvent('modal-cancel'))
+    closeModal(overlay, restoreFocus)
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel() })
+  overlay.querySelectorAll('[data-modal-cancel]').forEach((el) => el.addEventListener('click', cancel))
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancel()
+    }
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+function closeModal(overlay, restoreFocus) {
+  overlay.remove()
+  if (restoreFocus && typeof restoreFocus.focus === 'function') restoreFocus.focus()
+}
+
+function toast(message, state = 'error') {
+  let wrap = document.querySelector('.toast-stack')
+  if (!wrap) {
+    wrap = document.createElement('div')
+    wrap.className = 'toast-stack'
+    document.body.appendChild(wrap)
+  }
+  const el = document.createElement('div')
+  el.className = `toast ${state}`
+  el.textContent = message
+  wrap.appendChild(el)
+  setTimeout(() => el.remove(), state === 'error' ? 5200 : 2600)
 }
 
 function escapeHtml(s) {
@@ -480,6 +636,8 @@ function escapeHtml(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]))
 }
+
+function escapeAttr(s) { return escapeHtml(s) }
 
 function encodePath(p) {
   return p.split('/').map(encodeURIComponent).join('/')

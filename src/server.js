@@ -1,7 +1,8 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, extname, join, relative, resolve } from 'node:path'
+import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -38,16 +39,28 @@ const EXT_FROM_MIME = {
   'image/svg+xml': '.svg'
 }
 
-export function startServer({ root, port }) {
+const MAX_ASSET_BYTES = 10 * 1024 * 1024
+const ASSET_MIME_TYPES = new Set(Object.keys(EXT_FROM_MIME))
+
+export function startServer({ root, port, host = '127.0.0.1', open = false } = {}) {
+  root = resolve(root)
   const app = new Hono()
 
   const safeAbs = (p) => {
-    if (!p) throw new Error('path required')
-    const abs = resolve(root, p)
-    const rel = relative(root, abs)
-    if (rel.startsWith('..') || rel.includes('\0')) throw new Error('unsafe path')
+    const clean = cleanRelativePath(p)
+    const abs = resolve(root, clean)
+    assertInsideRoot(abs, root)
     return abs
   }
+
+  const safeOptionalFolder = (p) => {
+    const clean = cleanRelativePath(p || '', { allowEmpty: true })
+    return clean ? safeAbs(clean) : root
+  }
+
+  app.get('/api/root', (c) => {
+    return c.json({ root })
+  })
 
   app.get('/api/files', async (c) => {
     const files = await walkHtml(root)
@@ -60,7 +73,8 @@ export function startServer({ root, port }) {
 
   app.get('/api/file', async (c) => {
     try {
-      const abs = safeAbs(c.req.query('path'))
+      const relPath = cleanRelativePath(c.req.query('path'), { htmlOnly: true })
+      const abs = safeAbs(relPath)
       const content = await readFile(abs, 'utf8')
       return c.json({ content })
     } catch (e) {
@@ -70,7 +84,8 @@ export function startServer({ root, port }) {
 
   app.put('/api/file', async (c) => {
     try {
-      const abs = safeAbs(c.req.query('path'))
+      const relPath = cleanRelativePath(c.req.query('path'), { htmlOnly: true })
+      const abs = safeAbs(relPath)
       const { content } = await c.req.json()
       if (typeof content !== 'string') throw new Error('content must be a string')
       await writeFile(abs, content, 'utf8')
@@ -102,14 +117,7 @@ export function startServer({ root, port }) {
   app.post('/api/folders', async (c) => {
     try {
       const { path: p } = await c.req.json()
-      if (typeof p !== 'string' || !p.trim()) throw new Error('path required')
-      const cleaned = p.trim().replace(/^\/+|\/+$/g, '')
-      // Disallow dangerous characters in segment names
-      for (const seg of cleaned.split('/')) {
-        if (!seg || seg === '.' || seg === '..' || /[\\:*?"<>|]/.test(seg)) {
-          throw new Error('invalid folder name')
-        }
-      }
+      const cleaned = cleanRelativePath(p, { kind: 'folder' })
       const abs = safeAbs(cleaned)
       await mkdir(abs, { recursive: true })
       return c.json({ ok: true, path: cleaned })
@@ -121,10 +129,13 @@ export function startServer({ root, port }) {
   app.post('/api/new-design', async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}))
-      const folder = typeof body.folder === 'string' ? body.folder : ''
+      const folder = cleanRelativePath(typeof body.folder === 'string' ? body.folder : '', {
+        allowEmpty: true,
+        kind: 'folder'
+      })
       const requestedName = typeof body.name === 'string' ? body.name.trim() : ''
 
-      const folderAbs = folder ? safeAbs(folder) : root
+      const folderAbs = safeOptionalFolder(folder)
       await mkdir(folderAbs, { recursive: true })
 
       const existing = await listHtmlNames(folderAbs)
@@ -152,8 +163,16 @@ export function startServer({ root, port }) {
       if (typeof from !== 'string' || typeof to !== 'string') {
         throw new Error('from and to required')
       }
-      const fromAbs = safeAbs(from)
-      const toAbs = safeAbs(to)
+      const fromRel = cleanRelativePath(from)
+      const toRel = cleanRelativePath(to)
+      const fromAbs = safeAbs(fromRel)
+      const toAbs = safeAbs(toRel)
+      if (fromAbs === root || toAbs === root) throw new Error('cannot move root')
+      const fromStats = await stat(fromAbs)
+      if (fromStats.isFile()) {
+        validateHtmlPath(toRel)
+      }
+      if (await exists(toAbs)) throw new Error('destination already exists')
       await mkdir(dirname(toAbs), { recursive: true })
       await rename(fromAbs, toAbs)
       return c.json({ ok: true, path: relative(root, toAbs) })
@@ -171,7 +190,9 @@ export function startServer({ root, port }) {
       const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)
       if (!m) throw new Error('invalid dataUrl')
       const [, mime, b64] = m
+      if (!ASSET_MIME_TYPES.has(mime)) throw new Error('unsupported image type')
       const buf = Buffer.from(b64, 'base64')
+      if (buf.length > MAX_ASSET_BYTES) throw new Error('image too large (max 10MB)')
 
       const nameExt = extname(name).toLowerCase()
       const mimeExt = EXT_FROM_MIME[mime] ?? ''
@@ -179,7 +200,7 @@ export function startServer({ root, port }) {
       const base = basename(name).replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]/gi, '_') || 'asset'
       const finalName = `${Date.now()}-${base}${ext}`
 
-      const assetsDir = join(root, 'assets')
+      const assetsDir = safeAbs('assets')
       await mkdir(assetsDir, { recursive: true })
       const abs = join(assetsDir, finalName)
       await writeFile(abs, buf)
@@ -225,8 +246,12 @@ export function startServer({ root, port }) {
     let path = url.pathname
     if (path === '/') path = '/index.html'
     if (path === '/editor') path = '/editor.html'
-    const abs = join(WEB_DIR, path)
-    if (!abs.startsWith(WEB_DIR)) return c.notFound()
+    const abs = resolve(WEB_DIR, path.replace(/^\/+/, ''))
+    try {
+      assertInsideRoot(abs, WEB_DIR)
+    } catch {
+      return c.notFound()
+    }
     try {
       const buf = await readFile(abs)
       c.header('Content-Type', MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream')
@@ -236,13 +261,71 @@ export function startServer({ root, port }) {
     }
   })
 
-  serve({ fetch: app.fetch, port }, (info) => {
+  return serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+    const url = `http://${host}:${info.port}`
     console.log('')
     console.log(`  htmlshop running`)
-    console.log(`  → http://localhost:${info.port}`)
+    console.log(`  → ${url}`)
     console.log(`  → editing: ${root}`)
     console.log('')
+    if (open) openBrowser(url)
   })
+}
+
+function cleanRelativePath(value, opts = {}) {
+  const { allowEmpty = false, htmlOnly = false, kind = 'path' } = opts
+  if (typeof value !== 'string') throw new Error(`${kind} required`)
+  if (value.includes('\0')) throw new Error(`invalid ${kind}`)
+  const raw = value.trim()
+  if (isAbsolute(raw)) throw new Error(`invalid ${kind}`)
+  let cleaned = raw.replace(/^\/+|\/+$/g, '')
+  cleaned = cleaned.split('/').filter(Boolean).join('/')
+  if (!cleaned) {
+    if (allowEmpty) return ''
+    throw new Error(`${kind} required`)
+  }
+  for (const seg of cleaned.split('/')) {
+    if (!seg || seg === '.' || seg === '..' || /[\\:*?"<>|]/.test(seg)) {
+      throw new Error(`invalid ${kind}`)
+    }
+  }
+  if (htmlOnly) validateHtmlPath(cleaned)
+  return cleaned
+}
+
+function validateHtmlPath(path) {
+  const ext = extname(path).toLowerCase()
+  if (ext !== '.html' && ext !== '.htm') throw new Error('design files must end in .html')
+}
+
+function assertInsideRoot(abs, root) {
+  const rel = relative(root, abs)
+  if (rel === '') return
+  if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('unsafe path')
+}
+
+async function exists(path) {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function openBrowser(url) {
+  const opener = process.platform === 'darwin'
+    ? { command: 'open', args: [url] }
+    : process.platform === 'win32'
+      ? { command: 'cmd', args: ['/c', 'start', '', url] }
+      : { command: 'xdg-open', args: [url] }
+
+  const child = spawn(opener.command, opener.args, {
+    detached: true,
+    stdio: 'ignore'
+  })
+  child.on('error', () => {})
+  child.unref()
 }
 
 async function walkFolders(dir, relRoot = '') {
@@ -324,14 +407,23 @@ function blankDesignTemplate(title) {
       margin: 0;
       width: 1080px;
       height: 1080px;
+      position: relative;
+      overflow: hidden;
       background: #ffffff;
       font-family: "DM Sans", system-ui, -apple-system, sans-serif;
       color: #111111;
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
-    h1 { font-size: 84px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+    h1 {
+      position: absolute;
+      left: 120px;
+      top: 454px;
+      width: 840px;
+      margin: 0;
+      text-align: center;
+      font-size: 84px;
+      line-height: 1;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>

@@ -16,17 +16,18 @@
     <a href="/" class="logo" title="Back to gallery"><h1>htmlshop</h1></a>
     <a href="/" class="back">← all designs</a>
     <span id="filename" class="muted"></span>
+    <span id="root-path" class="root-path muted"></span>
 
     <div class="toolbar">
-      <button id="undo" class="tb" title="Undo (⌘Z)" disabled>↶</button>
-      <button id="redo" class="tb" title="Redo (⌘⇧Z)" disabled>↷</button>
+      <button id="undo" class="tb" title="Undo (⌘Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redo" class="tb" title="Redo (⌘⇧Z)" aria-label="Redo" disabled>↷</button>
 
       <div class="tb-divider"></div>
 
-      <button id="zoom-out" class="tb" title="Zoom out (⌘−)">−</button>
+      <button id="zoom-out" class="tb" title="Zoom out (⌘−)" aria-label="Zoom out">−</button>
       <button id="zoom-reset" class="tb tb-wide" title="Reset zoom (⌘0)">100%</button>
-      <button id="zoom-in" class="tb" title="Zoom in (⌘+)">+</button>
-      <button id="zoom-fit" class="tb" title="Fit to screen">⤢</button>
+      <button id="zoom-in" class="tb" title="Zoom in (⌘+)" aria-label="Zoom in">+</button>
+      <button id="zoom-fit" class="tb" title="Fit to screen" aria-label="Fit to screen">⤢</button>
 
       <div class="tb-divider"></div>
 
@@ -35,11 +36,11 @@
       <button id="add-image" class="tb tb-wide">+ Image</button>
       <input type="file" id="img-input" accept="image/*" hidden>
 
-      <button id="export" class="tb tb-wide" title="Export as PNG">Export PNG</button>
+      <button id="export" class="tb tb-wide" title="Export image">Export</button>
 
       <div class="tb-divider"></div>
 
-      <button id="settings-btn" class="tb" title="Overlay settings">⚙</button>
+      <button id="settings-btn" class="tb" title="Overlay settings" aria-label="Overlay settings">⚙</button>
       <div id="settings-pop" class="settings-pop" hidden>
         <label class="settings-row">
           <input type="checkbox" id="setting-hover" checked>

@@ -1,163 +1,187 @@
 # htmlshop
 
-A small local editor for HTML design files. You click stuff, it changes, it saves back to the file. Made for the workflow of "I had Claude generate a social post, now I want to tweak the copy and nudge the headline 20px left."
+A small local editor for HTML design files. You open a folder, click elements in the browser, adjust text, typography, layout, color, and export images. Files are edited in place on disk.
 
-Two parts:
+htmlshop ships two pieces together:
 
-1. A CLI (`npx htmlshop`) that opens a folder of `.html` files in a visual editor.
-2. A skill for Claude Code / Cursor so you can ask your AI tool to make designs in plain English and have them open automatically.
+1. `npx htmlshop`, a local Node server and browser editor for folders of `.html` designs.
+2. A reusable AI-tool skill/rule that tells Codex, Claude Code, Cursor, and similar IDEs how to generate fixed-size HTML designs and launch the editor.
 
----
+Everything runs locally. There are no accounts, telemetry, or remote htmlshop services.
 
-## Paste-ready install commands
+## Install The Skill
 
-### Claude Code (global)
+Install for Codex and Claude Code:
 
 ```bash
 npx htmlshop install
 ```
 
-Copies the plugin into `~/.claude/plugins/htmlshop/`. Restart Claude Code and the `/htmlshop` skill becomes available in every project.
+Install only one global skill:
 
-### Cursor (per-project rule)
+```bash
+npx htmlshop install codex
+npx htmlshop install claude
+```
 
-In the terminal at the root of whatever project you want htmlshop available in:
+Resolved install locations:
+
+- Codex: `${CODEX_HOME:-~/.codex}/skills/htmlshop/SKILL.md`
+- Claude Code: `${CLAUDE_CONFIG_DIR:-~/.claude}/skills/htmlshop/SKILL.md`
+
+For Cursor, run this at the root of each project where you want htmlshop available:
 
 ```bash
 npx htmlshop init
 ```
 
-Creates `.cursor/rules/htmlshop.mdc` in that project. Cursor picks it up on the next chat. Run it again in each project where you want it.
+That writes `.cursor/rules/htmlshop.mdc`. Windsurf, Aider, Continue, and other AI IDEs can use the same `skills/htmlshop/SKILL.md` content as project rules or context.
 
-### Cursor (global, manual)
-
-Cursor doesn't have a file-based global rules location, but it does have a user-rules box. Paste the contents of `skills/htmlshop/SKILL.md` from this repo into:
-
-**Cursor → Settings → Rules → User Rules**
-
-Grab the file with:
+Uninstall global skills:
 
 ```bash
-curl -s https://raw.githubusercontent.com/robzilla1738/htmlshop/main/skills/htmlshop/SKILL.md | pbcopy
+npx htmlshop uninstall
+npx htmlshop uninstall codex
+npx htmlshop uninstall claude
 ```
 
-(macOS `pbcopy` puts it on your clipboard; on Linux swap for `xclip -selection clipboard`.)
+## Run The Editor
 
-### Windsurf / other AI IDEs
-
-Most AI IDEs read project-level instruction files. The `init` command creates a Cursor rule, but the same file works as generic context:
-
-```bash
-npx htmlshop init
-```
-
-Or point whatever mechanism your tool uses (e.g. `.aiderrc`, `.continuerules`) at `skills/htmlshop/SKILL.md`.
-
-### Just the CLI, no AI skill
+Open the default projects folder, created on first run:
 
 ```bash
 npx htmlshop
 ```
 
-Opens the editor on `~/htmlshop/projects/` (created on first run). Pass a path to point it elsewhere:
+Open a specific folder:
 
 ```bash
 npx htmlshop ~/path/to/designs
 ```
 
-### Uninstall
+Useful options:
 
 ```bash
-npx htmlshop uninstall    # removes ~/.claude/plugins/htmlshop
+npx htmlshop ~/path/to/designs --port 5200
+npx htmlshop ~/path/to/designs --host 127.0.0.1
+npx htmlshop ~/path/to/designs --no-open
+npx htmlshop doctor
 ```
 
-For Cursor, delete the `.cursor/rules/htmlshop.mdc` or the user-rule you pasted in.
+The default URL is `http://127.0.0.1:5178`. If that port is busy and you did not explicitly set a port, htmlshop tries the next available port and prints the final URL.
 
----
+On first run, if the default projects folder has no visible designs, htmlshop seeds a bundled `welcome.html` demo so the gallery is immediately editable.
 
-## How you actually use it
+## AI Workflow
 
-Once the skill is installed, in Claude Code or Cursor:
+After installing the skill, ask your AI coding tool for a design:
 
-```
+```text
 /htmlshop make a 1080x1080 Instagram post titled "Truth isn't loud"
-          using my design-system.md
+using my design-system.md
 ```
 
-Or any variation. The assistant:
+The assistant should:
 
-1. Looks for a `design-system.md` if you referenced one (the path you gave, current directory, `~/htmlshop/design-system.md`).
-2. Writes a self-contained HTML file into `~/htmlshop/projects/<slug>/`.
-3. Launches `npx htmlshop <slug>` in the background.
-4. Gives you the editor URL (default `http://localhost:5178`).
+1. Read a referenced design system if one exists.
+2. Write one or more self-contained `.html` files under `~/htmlshop/projects/`.
+3. Launch `npx htmlshop <project-folder>` in the background.
+4. Give you the local editor URL.
 
-From there you can click into any element and tweak it visually.
+Projects convention:
 
----
+- Loose `.html` files in `~/htmlshop/projects/` are standalone designs.
+- Subfolders are carousels or multi-slide projects.
+- Uploaded images are saved under `<root>/assets/`.
 
-## Projects folder
+## Editor Features
 
-Everything lives under `~/htmlshop/projects/` by default.
+Gallery:
 
-- Subfolders are carousels (multi-slide projects).
-- Loose files at the top level are standalone designs.
+- Shows standalone designs and carousel folders.
+- Creates new designs and new carousels.
+- Renames, moves, duplicates, and deletes designs with local modals.
+- Shows the active root folder in the header.
+- Opens folders with multiple designs as a side-by-side carousel editor.
 
-That's the whole convention.
+Editor:
 
----
+- Click an element to select it.
+- Drag or resize elements with transform handles.
+- Static/relative layouts freeze into absolute positions on first transform so siblings do not reflow.
+- Layers panel with editor-only hide/show toggles.
+- Properties panel for text, typography, layout, background, borders, effects, and blending.
+- Undo/redo per open design.
+- Zoom controls and fit-to-screen.
+- Add artboards and images.
+- Rename or delete the active artboard from the editor toolbar.
+- Export PNG/JPG at 1x, 2x, or 3x for the active design or all slides.
 
-## What the editor actually does
-
-Gallery: designs grouped by folder. Buttons for `+ New design` and `+ New carousel`. Each card has a `⋯` menu (move, duplicate, rename, delete). Folder headers have their own menu plus an "Open as carousel" button when there are 2+ files.
-
-Editor: one iframe per open design, laid out horizontally. Each stage has its own selection, history, and save state.
-
-- Click-drag any element. If it's static or relative, it gets promoted to `position: absolute` at its current rendered spot on the first drag, so nothing jumps.
-- 8 resize handles on the selected element.
-- Layers panel on the left, labeled by visible text. Eye icon hides/shows (editor-only, not written to disk).
-- Properties panel on the right:
-  - Text content, plus B/I/U and A−/A+ steppers.
-  - Typography: font-family dropdown auto-filled from fonts actually used in the designs + web standards. Size, weight, line-height, letter-spacing, color, align, transform.
-  - Layout: display, position, inset (when absolute), z-index, width/height, padding, margin, gap, overflow, visibility.
-  - Background: color picker and a full `background` shorthand field for gradients and images. Picking a color auto-clears `background-image` so the color actually shows.
-  - Border, radius, box-shadow, opacity, mix-blend-mode.
-- Undo/redo with ⌘Z / ⌘⇧Z, 100 steps per stage.
-- Zoom with ⌘− / ⌘+ / ⌘0. Auto-fits on load.
-- `+ Artboard` creates a blank sibling design and reloads with it included.
-- `+ Image` uploads to `<folder>/assets/` and drops it on the canvas.
-- Bring-to-front / send-to-back in the meta row.
-- Export opens a dialog: PNG or JPG, 1×/2×/3×, this design or all slides. Uses the File System Access API to let you pick the save location in Chrome/Edge; falls back to a normal download in Firefox/Safari.
-- Overlay settings (⚙): toggle hover outlines and the active-stage border.
-
----
-
-## Shortcuts
+Shortcuts:
 
 | Action | Shortcut |
 |---|---|
-| Undo / Redo | ⌘Z / ⌘⇧Z |
-| Zoom in / out / 100% | ⌘+ / ⌘− / ⌘0 |
-| Delete selected | ⌫ |
-| Duplicate selected | ⌘D |
+| Undo / Redo | Cmd+Z / Cmd+Shift+Z |
+| Zoom in / out / 100% | Cmd+Plus / Cmd+Minus / Cmd+0 |
+| Delete selected | Delete |
+| Duplicate selected | Cmd+D |
 | Deselect | Esc |
 
----
+## Design File Shape
 
-## Caveats worth knowing
+htmlshop works best with single-file fixed canvases:
 
-Files get modified in place. Keep them in git or back them up before doing anything destructive.
+```html
+<!doctype html>
+<html>
+<head>
+  <style>
+    body {
+      margin: 0;
+      width: 1080px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+    }
+    .headline {
+      position: absolute;
+      left: 120px;
+      top: 240px;
+    }
+  </style>
+</head>
+<body>
+  <h1 class="headline">Hello</h1>
+</body>
+</html>
+```
 
-Save re-serializes the live DOM back to the file. Attribute quoting gets normalized, self-closing tags become HTML5-style, but comments and text stay intact.
-
-Preview scaling is tuned for 1080×1080. Other dimensions work fine in the editor, but gallery previews may letterbox.
-
-The File System Access API (the "pick where to save" dialog) is Chrome/Edge only. Everywhere else it falls back to a regular download.
-
----
+Inline CSS is preferred. External JavaScript is not needed. Google Fonts are supported, but local/system fonts keep the workflow fully offline after the editor loads.
 
 ## Privacy
 
-See [PRIVACY.md](./PRIVACY.md). Short version: everything runs locally, no telemetry, no accounts. The only external request is DM Sans from Google Fonts, which you can block.
+See [PRIVACY.md](./PRIVACY.md). Short version: htmlshop serves files from your machine to your browser on `127.0.0.1`, edits files on disk, and does not send usage data anywhere. The editor UI currently loads DM Sans from Google Fonts.
+
+## Development
+
+```bash
+npm install
+npm run check
+node bin/htmlshop.js --no-open
+```
+
+`npm run check` performs syntax checks, runs a local smoke test against a temporary folder, runs `npm audit --omit=dev`, and verifies package contents with `npm pack --dry-run`.
+
+Manual release checklist:
+
+1. Empty first-run gallery.
+2. New design and new carousel creation.
+3. Open single design and multi-slide carousel.
+4. Select, drag, resize, duplicate, delete, undo, redo.
+5. Rename and move conflict handling.
+6. Upload image and save.
+7. Export PNG and JPG at 1x/2x with correct dimensions.
+8. `htmlshop install`, `install codex`, `install claude`, `init`, `doctor`, and `--no-open`.
 
 ## License
 

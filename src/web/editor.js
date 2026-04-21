@@ -10,6 +10,7 @@ document.getElementById('filename').textContent =
   fileList.length === 1 ? fileList[0] : `${fileList.length} designs`
 
 const statusEl = document.getElementById('status')
+const rootPathEl = document.getElementById('root-path')
 const stagesContainer = document.getElementById('stages')
 const canvas = document.getElementById('canvas')
 const panel = document.getElementById('panel')
@@ -68,6 +69,8 @@ const settings = {
   hoverOutline: true,
   activeBorder: true
 }
+
+loadRootPath()
 
 // Build stages
 for (const f of fileList) {
@@ -153,11 +156,18 @@ function onStageLoad(s) {
   const doc = s.iframe.contentDocument
   if (!doc) return
 
-  // Adopt whatever size the design actually is. Most generated designs
-  // set fixed body dimensions (width:1080px; height:1350px; etc.).
+  // Adopt whatever size the design actually is. Most generated designs set
+  // fixed body dimensions (width:1080px; height:1350px; etc.) — honor that.
+  // Falling back to scrollHeight can be misleading if content has drifted
+  // outside the intended canvas, so CSS-declared width/height wins.
   const body = doc.body
-  const w = body.scrollWidth || body.offsetWidth || 1080
-  const h = body.scrollHeight || body.offsetHeight || 1080
+  const bodyCs = s.iframe.contentWindow.getComputedStyle(body)
+  const declaredW = parseFloat(bodyCs.width)
+  const declaredH = parseFloat(bodyCs.height)
+  const w = (isFinite(declaredW) && declaredW > 0) ? declaredW
+    : (body.scrollWidth || body.offsetWidth || 1080)
+  const h = (isFinite(declaredH) && declaredH > 0) ? declaredH
+    : (body.scrollHeight || body.offsetHeight || 1080)
   s.naturalW = w
   s.naturalH = h
   s.iframe.style.width = w + 'px'
@@ -180,6 +190,17 @@ function onStageLoad(s) {
     updateHistoryButtons()
     renderLayers()
   }
+}
+
+async function loadRootPath() {
+  if (!rootPathEl) return
+  try {
+    const res = await fetch('/api/root')
+    if (!res.ok) return
+    const { root } = await res.json()
+    rootPathEl.textContent = root
+    rootPathEl.title = root
+  } catch {}
 }
 
 function refreshOverlayStyles(s) {
@@ -294,30 +315,33 @@ function freezeDocumentLayout(doc, win) {
   const elements = Array.from(doc.querySelectorAll('body *'))
     .filter((el) => !isStructuralTag(el))
 
-  // Measure everyone BEFORE we change any styles, otherwise each mutation
-  // would invalidate subsequent measurements.
+  // Measure everything — element rects AND their offsetParent rects — BEFORE
+  // any mutation. position:absolute anchors to the nearest positioned ancestor
+  // (the offsetParent), not always body. Mixing up the reference frame was
+  // what caused elements to drift and body.scrollHeight to balloon on reload.
   const measurements = elements.map((el) => {
     const rect = el.getBoundingClientRect()
     const cs = win.getComputedStyle(el)
-    return {
-      el,
-      rect,
-      alreadyAbs: cs.position === 'absolute' || cs.position === 'fixed'
-    }
+    const alreadyAbs = cs.position === 'absolute' || cs.position === 'fixed'
+    const parent = el.offsetParent || body
+    const parentRect = parent.getBoundingClientRect()
+    const parentCs = win.getComputedStyle(parent)
+    const borderL = parseFloat(parentCs.borderLeftWidth) || 0
+    const borderT = parseFloat(parentCs.borderTopWidth) || 0
+    return { el, rect, parentRect, borderL, borderT, alreadyAbs }
   })
 
-  const bodyRect = body.getBoundingClientRect()
-
-  // Body becomes the positioning context for its absolute descendants.
+  // Body becomes a positioning context for any descendants whose offsetParent
+  // would have fallen through to it.
   const bodyCs = win.getComputedStyle(body)
   if (bodyCs.position === 'static') body.style.position = 'relative'
 
   for (const m of measurements) {
     if (m.alreadyAbs) continue
-    const { el, rect } = m
+    const { el, rect, parentRect, borderL, borderT } = m
     el.style.position = 'absolute'
-    el.style.left = Math.round(rect.left - bodyRect.left) + 'px'
-    el.style.top = Math.round(rect.top - bodyRect.top) + 'px'
+    el.style.left = Math.round(rect.left - parentRect.left - borderL) + 'px'
+    el.style.top = Math.round(rect.top - parentRect.top - borderT) + 'px'
     el.style.width = Math.round(rect.width) + 'px'
     el.style.height = Math.round(rect.height) + 'px'
     el.style.margin = '0'
@@ -476,6 +500,13 @@ function renderPanel(s, el) {
   const currentFont = cs.fontFamily
   const bgShort = el.style.background || ''
 
+  // Show the Text section when the element has text content we can safely edit:
+  // leaves have whole textContent, elements with direct text nodes have those
+  // nodes (children are preserved).
+  const directText = getDirectText(el)
+  const textEditable = !hasChildElements || directText.length > 0
+  const textValue = !hasChildElements ? (el.textContent ?? '') : directText
+
   panel.innerHTML = `
     <div class="meta">
       <div class="meta-ident">
@@ -484,17 +515,17 @@ function renderPanel(s, el) {
         ${cls ? `<span class="cls">${escapeHtml(cls)}</span>` : ''}
       </div>
       <div class="meta-actions">
-        <button id="to-front" class="meta-btn" title="Bring to front">↑</button>
-        <button id="to-back" class="meta-btn" title="Send to back">↓</button>
+        <button id="to-front" class="meta-btn" title="Bring to front" aria-label="Bring to front">↑</button>
+        <button id="to-back" class="meta-btn" title="Send to back" aria-label="Send to back">↓</button>
         <button id="duplicate-el" class="meta-btn" title="Duplicate (⌘D)">Dup</button>
         <button id="delete-el" class="meta-btn meta-btn-danger" title="Delete (⌫)">Del</button>
       </div>
     </div>
 
-    ${!hasChildElements ? `
+    ${textEditable ? `
       <div class="section">
-        <div class="section-title">Text</div>
-        <textarea id="text" rows="3">${escapeHtml(el.textContent ?? '')}</textarea>
+        <div class="section-title">Text${hasChildElements ? ' (this element only)' : ''}</div>
+        <textarea id="text" rows="3">${escapeHtml(textValue)}</textarea>
       </div>
     ` : ''}
 
@@ -572,7 +603,18 @@ function renderPanel(s, el) {
   const text = panel.querySelector('#text')
   if (text) {
     text.addEventListener('input', () => {
-      el.textContent = text.value
+      if (el.children.length === 0) {
+        // Leaf: safe to replace the whole textContent.
+        el.textContent = text.value
+      } else {
+        // Element has children; only replace its direct text nodes so nested
+        // elements (spans, line breaks, etc.) stay intact.
+        const directNodes = [...el.childNodes].filter((n) => n.nodeType === 3)
+        directNodes.forEach((n) => n.remove())
+        if (text.value) {
+          el.insertBefore(el.ownerDocument.createTextNode(text.value), el.firstChild)
+        }
+      }
       scheduleSave(s)
       renderLayers()
     })
@@ -803,13 +845,46 @@ function renderLayers() {
     const doc = s.iframe.contentDocument
     if (!doc) continue
 
-    if (stages.length > 1) {
-      const header = document.createElement('div')
-      header.className = 'layers-stage' + (s === activeStage ? ' active' : '')
-      header.textContent = s.file
-      header.addEventListener('click', () => setActiveStage(s))
-      layersBody.appendChild(header)
-    }
+    const header = document.createElement('div')
+    header.className = 'layers-stage' + (s === activeStage ? ' active' : '')
+    header.addEventListener('click', () => setActiveStage(s))
+
+    const title = document.createElement('span')
+    title.className = 'layers-stage-name'
+    title.textContent = s.file
+
+    const actions = document.createElement('span')
+    actions.className = 'layers-stage-actions'
+
+    const rename = document.createElement('button')
+    rename.className = 'layer-stage-action'
+    rename.type = 'button'
+    rename.title = 'Rename artboard'
+    rename.setAttribute('aria-label', `Rename ${s.file}`)
+    rename.textContent = '✎'
+    rename.addEventListener('click', (e) => {
+      e.stopPropagation()
+      setActiveStage(s)
+      renameArtboard()
+    })
+
+    const del = document.createElement('button')
+    del.className = 'layer-stage-action danger'
+    del.type = 'button'
+    del.title = 'Delete artboard'
+    del.setAttribute('aria-label', `Delete ${s.file}`)
+    del.textContent = '⌫'
+    del.addEventListener('click', (e) => {
+      e.stopPropagation()
+      setActiveStage(s)
+      deleteArtboard()
+    })
+
+    actions.appendChild(rename)
+    actions.appendChild(del)
+    header.appendChild(title)
+    header.appendChild(actions)
+    layersBody.appendChild(header)
 
     renderLayerNode(layersBody, s, doc.body, 0)
   }
@@ -862,7 +937,13 @@ function renderLayerNode(container, s, el, depth) {
 
 function isStructuralTag(el) {
   const t = el.tagName
-  return t === 'SCRIPT' || t === 'STYLE' || t === 'LINK' || t === 'META' || t === 'NOSCRIPT' || t === 'TITLE'
+  // Hidden infrastructure (head-ish elements that somehow land in body).
+  if (t === 'SCRIPT' || t === 'STYLE' || t === 'LINK' || t === 'META' || t === 'NOSCRIPT' || t === 'TITLE') return true
+  // Layout hints with no visual surface to edit — line breaks, horizontal rules,
+  // word-break hints, picture sources, template fragments. Keeping these in the
+  // layers panel is noise; the user edits the content around them instead.
+  if (t === 'BR' || t === 'HR' || t === 'WBR' || t === 'SOURCE' || t === 'TRACK' || t === 'TEMPLATE') return true
+  return false
 }
 
 function isTransparentWrapper(el) {
@@ -888,8 +969,6 @@ function describeElement(el) {
     return `🖼 ${base}`
   }
   if (tag === 'svg') return 'svg icon'
-  if (tag === 'hr') return 'divider'
-  if (tag === 'br') return 'line break'
   if (tag === 'body') return 'body (background)'
 
   // Prefer visible text — use direct text content first, then full descendant text
@@ -1021,6 +1100,7 @@ async function doSave(s, { skipHistory = false } = {}) {
     setAnyStatus('saved', 'saved')
   } catch (e) {
     setAnyStatus('save error: ' + e.message, 'error')
+    toast('Save failed: ' + e.message)
   } finally {
     s.saving = false
     updateResizeOverlay()
@@ -1074,7 +1154,7 @@ async function onImagePicked(e) {
   e.target.value = ''
   if (!f) return
   if (f.size > 10 * 1024 * 1024) {
-    alert('Image too large (max 10MB)')
+    toast('Image too large (max 10MB)')
     return
   }
   if (!activeStage) return
@@ -1091,6 +1171,7 @@ async function onImagePicked(e) {
     insertImage(activeStage, json.path)
   } catch (err) {
     setAnyStatus('upload error: ' + err.message, 'error')
+    toast('Upload failed: ' + err.message)
   }
 }
 
@@ -1181,6 +1262,82 @@ async function addArtboard() {
   }
 }
 
+async function renameArtboard() {
+  const s = activeStage
+  if (!s) return
+  const current = s.file.split('/').pop()
+  const next = await promptText({
+    title: 'Rename artboard',
+    label: 'File name',
+    value: current,
+    confirmText: 'Rename'
+  })
+  if (!next) return
+  const nextName = normalizeHtmlName(next)
+  if (nextName === current) return
+
+  const dir = s.file.split('/').slice(0, -1).join('/')
+  const to = dir ? `${dir}/${nextName}` : nextName
+  setAnyStatus('renaming…', 'saving')
+  try {
+    const res = await fetch('/api/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: s.file, to })
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error || 'rename failed')
+    const nextFiles = fileList.map((f) => f === s.file ? json.path : f)
+    navigateToArtboards(nextFiles)
+  } catch (err) {
+    setAnyStatus('rename error: ' + err.message, 'error')
+    toast('Rename failed: ' + err.message)
+  }
+}
+
+async function deleteArtboard() {
+  const s = activeStage
+  if (!s) return
+  const ok = await confirmDialog({
+    title: 'Delete artboard',
+    message: `Delete "${s.file}"? This removes the HTML file from disk and cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true
+  })
+  if (!ok) return
+
+  setAnyStatus('deleting…', 'saving')
+  try {
+    const res = await fetch(`/api/file?path=${encodeURIComponent(s.file)}`, { method: 'DELETE' })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(json.error || 'delete failed')
+    const nextFiles = fileList.filter((f) => f !== s.file)
+    if (!nextFiles.length) {
+      location.href = '/'
+      return
+    }
+    navigateToArtboards(nextFiles)
+  } catch (err) {
+    setAnyStatus('delete error: ' + err.message, 'error')
+    toast('Delete failed: ' + err.message)
+  }
+}
+
+function normalizeHtmlName(name) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) return ''
+  return /\.html?$/i.test(trimmed) ? trimmed : `${trimmed}.html`
+}
+
+function navigateToArtboards(paths) {
+  if (paths.length === 1) {
+    location.href = `/editor?file=${encodeURIComponent(paths[0])}`
+    return
+  }
+  const qs = paths.map(encodeURIComponent).join(',')
+  location.href = `/editor?files=${qs}`
+}
+
 function commonFolder(paths) {
   if (!paths.length) return ''
   const dirs = paths.map((p) => p.split('/').slice(0, -1).join('/'))
@@ -1192,20 +1349,21 @@ function commonFolder(paths) {
 
 function exportPng() {
   if (!window.htmlToImage) {
-    alert('Export library not loaded yet')
+    toast('Export library not loaded yet')
     return
   }
   openExportDialog()
 }
 
 function openExportDialog() {
+  const restoreFocus = document.activeElement
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
 
   const multi = stages.length > 1
   overlay.innerHTML = `
-    <div class="modal">
-      <div class="modal-head">Export</div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <div class="modal-head" id="export-title">Export</div>
       <div class="modal-body">
         <div class="modal-section-title">Scope</div>
         <div class="export-scope">
@@ -1240,15 +1398,26 @@ function openExportDialog() {
       group.querySelectorAll('.choice-btn').forEach((b) => b.classList.toggle('active', b === btn))
     })
   })
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove() })
-  overlay.querySelector('#export-cancel').addEventListener('click', () => overlay.remove())
+  const close = () => {
+    overlay.remove()
+    if (restoreFocus && typeof restoreFocus.focus === 'function') restoreFocus.focus()
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      close()
+    }
+  })
+  overlay.querySelector('#export-cancel').addEventListener('click', close)
   overlay.querySelector('#export-go').addEventListener('click', async () => {
     const format = overlay.querySelector('[data-group="format"] .active').dataset.value
     const scale = Number(overlay.querySelector('[data-group="scale"] .active').dataset.value)
     const scope = overlay.querySelector('input[name="scope"]:checked').value
-    overlay.remove()
+    close()
     await runExport({ format, scale, scope })
   })
+  overlay.querySelector('#export-go')?.focus()
 }
 
 async function runExport({ format, scale, scope }) {
@@ -1276,6 +1445,7 @@ async function runExport({ format, scale, scope }) {
       return
     }
     setAnyStatus('export error: ' + err.message, 'error')
+    toast('Export failed: ' + err.message)
   }
 }
 
@@ -1292,8 +1462,8 @@ async function renderStageToBlob(s, { format, scale }) {
 
   try {
     const target = doc.body
-    const width = target.scrollWidth || 1080
-    const height = target.scrollHeight || 1080
+    const width = s.naturalW || parseFloat(win.getComputedStyle(target).width) || target.scrollWidth || 1080
+    const height = s.naturalH || parseFloat(win.getComputedStyle(target).height) || target.scrollHeight || 1080
     const bg = win.getComputedStyle(target).backgroundColor || '#ffffff'
     const opts = { width, height, pixelRatio: scale, cacheBust: true, backgroundColor: bg }
 
@@ -1418,6 +1588,110 @@ function isTyping(el) {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+function toast(message, state = 'error') {
+  let wrap = document.querySelector('.toast-stack')
+  if (!wrap) {
+    wrap = document.createElement('div')
+    wrap.className = 'toast-stack'
+    document.body.appendChild(wrap)
+  }
+  const el = document.createElement('div')
+  el.className = `toast ${state}`
+  el.textContent = message
+  wrap.appendChild(el)
+  setTimeout(() => el.remove(), state === 'error' ? 5200 : 2600)
+}
+
+function promptText({ title, label, value = '', placeholder = '', confirmText = 'OK' }) {
+  const restoreFocus = document.activeElement
+  const overlay = createModal({
+    title,
+    body: `
+      <label class="dialog-field">
+        <span>${escapeHtml(label)}</span>
+        <input id="dialog-input" type="text" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder)}">
+      </label>
+    `,
+    footer: `
+      <button class="tb" data-modal-cancel>Cancel</button>
+      <button class="tb tb-primary" id="dialog-confirm">${escapeHtml(confirmText)}</button>
+    `,
+    restoreFocus
+  })
+  const input = overlay.querySelector('#dialog-input')
+  const confirm = overlay.querySelector('#dialog-confirm')
+
+  return new Promise((resolve) => {
+    const finish = (val) => {
+      closeModal(overlay, restoreFocus)
+      resolve(val)
+    }
+    confirm.addEventListener('click', () => finish(input.value.trim()))
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        finish(input.value.trim())
+      }
+    })
+    overlay.addEventListener('modal-cancel', () => resolve(null), { once: true })
+    input.focus()
+    input.select()
+  })
+}
+
+function confirmDialog({ title, message, confirmText = 'OK', danger = false }) {
+  const restoreFocus = document.activeElement
+  const overlay = createModal({
+    title,
+    body: `<p class="dialog-message">${escapeHtml(message)}</p>`,
+    footer: `
+      <button class="tb" data-modal-cancel>Cancel</button>
+      <button class="tb ${danger ? 'tb-danger' : 'tb-primary'}" id="dialog-confirm">${escapeHtml(confirmText)}</button>
+    `,
+    restoreFocus
+  })
+
+  return new Promise((resolve) => {
+    overlay.querySelector('#dialog-confirm').addEventListener('click', () => {
+      closeModal(overlay, restoreFocus)
+      resolve(true)
+    })
+    overlay.addEventListener('modal-cancel', () => resolve(false), { once: true })
+    overlay.querySelector('[data-modal-cancel]')?.focus()
+  })
+}
+
+function createModal({ title, body, footer, restoreFocus }) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head" id="modal-title">${escapeHtml(title)}</div>
+      <div class="modal-body">${body}</div>
+      <div class="modal-foot">${footer}</div>
+    </div>
+  `
+  const cancel = () => {
+    overlay.dispatchEvent(new CustomEvent('modal-cancel'))
+    closeModal(overlay, restoreFocus)
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cancel() })
+  overlay.querySelectorAll('[data-modal-cancel]').forEach((el) => el.addEventListener('click', cancel))
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancel()
+    }
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+function closeModal(overlay, restoreFocus) {
+  overlay.remove()
+  if (restoreFocus && typeof restoreFocus.focus === 'function') restoreFocus.focus()
+}
 
 function parseColor(color) {
   const s = String(color || '').trim()
