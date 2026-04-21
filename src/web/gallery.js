@@ -7,15 +7,32 @@ const newDesignBtn = document.getElementById('new-design')
 let files = []
 let folders = []
 
-// Scale each card's preview iframe to exactly match the card's rendered width.
+// Scale each card's preview iframe so the design fills the card.
+// The design's natural size is read from its body on load, then scaled.
 const previewObserver = new ResizeObserver((entries) => {
   for (const entry of entries) {
     const iframe = entry.target.querySelector('iframe')
     if (!iframe) continue
-    const w = entry.contentRect.width
-    if (w > 0) iframe.style.transform = `scale(${w / 1080})`
+    const cardW = entry.contentRect.width
+    const naturalW = Number(iframe.dataset.naturalW) || 1080
+    if (cardW > 0) iframe.style.transform = `scale(${cardW / naturalW})`
   }
 })
+
+function sizePreview(frame, iframe) {
+  const doc = iframe.contentDocument
+  if (!doc || !doc.body) return
+  const w = doc.body.scrollWidth || doc.body.offsetWidth || 1080
+  const h = doc.body.scrollHeight || doc.body.offsetHeight || 1080
+  iframe.style.width = w + 'px'
+  iframe.style.height = h + 'px'
+  iframe.dataset.naturalW = w
+  iframe.dataset.naturalH = h
+  frame.style.aspectRatio = `${w} / ${h}`
+  // Trigger a rescale immediately (observer will also fire on next layout)
+  const cardW = frame.clientWidth
+  if (cardW > 0) iframe.style.transform = `scale(${cardW / w})`
+}
 
 await refresh()
 
@@ -187,6 +204,13 @@ function buildCard(f) {
   label.className = 'label'
   label.title = f.path
   label.textContent = f.name
+
+  iframe.addEventListener('load', () => {
+    sizePreview(frame, iframe)
+    const w = iframe.dataset.naturalW
+    const h = iframe.dataset.naturalH
+    if (w && h) label.textContent = `${f.name}  ·  ${w} × ${h}`
+  })
 
   const menu = buildCardMenu(f)
 

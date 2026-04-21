@@ -182,6 +182,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1); }
 
 .frame {
+  /* aspect-ratio is overridden per-card in gallery.js once the design loads */
   aspect-ratio: 1 / 1;
   overflow: hidden;
   background: white;
@@ -490,6 +491,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .stage-wrap.active .stage-label { color: #4f8cff; }
 .stage {
+  /* width/height are set dynamically per-design in editor.js, after
+     the iframe loads. Fallback to 1080×1080 before load / if empty. */
   width: 1080px;
   height: 1080px;
   background: white;

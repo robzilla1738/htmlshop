@@ -90,12 +90,15 @@ for (const f of fileList) {
     file: f,
     iframe,
     wrap,
+    label,
     history: [],
     historyIndex: -1,
     selected: null,
     saveTimer: null,
     saving: false,
-    pendingSave: false
+    pendingSave: false,
+    naturalW: 1080,
+    naturalH: 1080
   }
   stages.push(s)
   iframe.addEventListener('load', () => onStageLoad(s))
@@ -149,6 +152,17 @@ settingActiveBorder.addEventListener('change', () => {
 function onStageLoad(s) {
   const doc = s.iframe.contentDocument
   if (!doc) return
+
+  // Adopt whatever size the design actually is. Most generated designs
+  // set fixed body dimensions (width:1080px; height:1350px; etc.).
+  const body = doc.body
+  const w = body.scrollWidth || body.offsetWidth || 1080
+  const h = body.scrollHeight || body.offsetHeight || 1080
+  s.naturalW = w
+  s.naturalH = h
+  s.iframe.style.width = w + 'px'
+  s.iframe.style.height = h + 'px'
+  s.label.textContent = `${s.file}  ·  ${w} × ${h}`
 
   refreshOverlayStyles(s)
 
@@ -227,18 +241,17 @@ function setActiveStage(s) {
 function startDrag(s, el, startEvent) {
   const doc = s.iframe.contentDocument
   const win = s.iframe.contentWindow
-  const cs = win.getComputedStyle(el)
 
-  // mousedown originated inside this iframe — browser implicit mouse capture
-  // will keep delivering mousemove/mouseup to this iframe's document until the
-  // button is released. Listen here, not on window.
+  // Photoshop-style workspace: first interaction freezes the document so
+  // elements stop reflowing around each other. After this, drags just move
+  // the selected element — siblings stay put.
+  freezeDocumentLayout(doc, win)
+
+  const cs = win.getComputedStyle(el)
   const startX = startEvent.clientX
   const startY = startEvent.clientY
-
-  const isAbs = cs.position === 'absolute' || cs.position === 'fixed'
-  let origTop = parseFloat(cs.top) || 0
-  let origLeft = parseFloat(cs.left) || 0
-  let promoted = false
+  const origLeft = parseFloat(cs.left) || 0
+  const origTop = parseFloat(cs.top) || 0
   let moved = false
 
   const onMove = (e) => {
@@ -246,24 +259,6 @@ function startDrag(s, el, startEvent) {
     const dy = e.clientY - startY
     if (!moved && Math.hypot(dx, dy) < 3) return
     moved = true
-
-    if (!isAbs && !promoted) {
-      const rect = el.getBoundingClientRect()
-      const parent = el.offsetParent || doc.body
-      const parentRect = parent.getBoundingClientRect()
-      const parentCs = win.getComputedStyle(parent)
-      const borderL = parseFloat(parentCs.borderLeftWidth) || 0
-      const borderT = parseFloat(parentCs.borderTopWidth) || 0
-      const x = rect.left - parentRect.left - borderL
-      const y = rect.top - parentRect.top - borderT
-      el.style.position = 'absolute'
-      el.style.left = x + 'px'
-      el.style.top = y + 'px'
-      origLeft = x
-      origTop = y
-      promoted = true
-    }
-
     el.style.left = Math.round(origLeft + dx) + 'px'
     el.style.top = Math.round(origTop + dy) + 'px'
     updateResizeOverlay()
@@ -284,6 +279,49 @@ function startDrag(s, el, startEvent) {
   doc.addEventListener('mouseup', onUp, true)
   // Safety net: if the iframe loses focus mid-drag (e.g. user alt-tabs), release.
   win.addEventListener('blur', cleanup)
+}
+
+/**
+ * Convert the document's layout to absolute positioning at the current
+ * rendered coordinates of every element. After this, nothing reflows —
+ * elements stay where they're placed, matching a Photoshop-style canvas.
+ * Idempotent: already-absolute elements are left alone.
+ */
+function freezeDocumentLayout(doc, win) {
+  if (!doc || !doc.body) return
+
+  const body = doc.body
+  const elements = Array.from(doc.querySelectorAll('body *'))
+    .filter((el) => !isStructuralTag(el))
+
+  // Measure everyone BEFORE we change any styles, otherwise each mutation
+  // would invalidate subsequent measurements.
+  const measurements = elements.map((el) => {
+    const rect = el.getBoundingClientRect()
+    const cs = win.getComputedStyle(el)
+    return {
+      el,
+      rect,
+      alreadyAbs: cs.position === 'absolute' || cs.position === 'fixed'
+    }
+  })
+
+  const bodyRect = body.getBoundingClientRect()
+
+  // Body becomes the positioning context for its absolute descendants.
+  const bodyCs = win.getComputedStyle(body)
+  if (bodyCs.position === 'static') body.style.position = 'relative'
+
+  for (const m of measurements) {
+    if (m.alreadyAbs) continue
+    const { el, rect } = m
+    el.style.position = 'absolute'
+    el.style.left = Math.round(rect.left - bodyRect.left) + 'px'
+    el.style.top = Math.round(rect.top - bodyRect.top) + 'px'
+    el.style.width = Math.round(rect.width) + 'px'
+    el.style.height = Math.round(rect.height) + 'px'
+    el.style.margin = '0'
+  }
 }
 
 function beginPointerCapture(cursor) {
@@ -351,31 +389,14 @@ function startResize(corner, startEvent) {
   const doc = s.iframe.contentDocument
   const win = s.iframe.contentWindow
 
+  // Lock the layout before resizing so nothing else reflows.
+  freezeDocumentLayout(doc, win)
+
   const cs = win.getComputedStyle(el)
-  const wasAbs = cs.position === 'absolute' || cs.position === 'fixed'
-
-  let left = parseFloat(cs.left) || 0
-  let top = parseFloat(cs.top) || 0
-  let width = parseFloat(cs.width) || 0
-  let height = parseFloat(cs.height) || 0
-
-  if (!wasAbs) {
-    const rect = el.getBoundingClientRect()
-    const parent = el.offsetParent || doc.body
-    const parentRect = parent.getBoundingClientRect()
-    const parentCs = win.getComputedStyle(parent)
-    const borderL = parseFloat(parentCs.borderLeftWidth) || 0
-    const borderT = parseFloat(parentCs.borderTopWidth) || 0
-    left = rect.left - parentRect.left - borderL
-    top = rect.top - parentRect.top - borderT
-    width = rect.width
-    height = rect.height
-    el.style.position = 'absolute'
-    el.style.left = left + 'px'
-    el.style.top = top + 'px'
-    el.style.width = width + 'px'
-    el.style.height = height + 'px'
-  }
+  const left = parseFloat(cs.left) || 0
+  const top = parseFloat(cs.top) || 0
+  const width = parseFloat(cs.width) || 0
+  const height = parseFloat(cs.height) || 0
 
   // startEvent comes from parent (handle in parent DOM) — its clientX/Y are
   // already in parent-window coords.
@@ -795,6 +816,17 @@ function renderLayers() {
 }
 
 function renderLayerNode(container, s, el, depth) {
+  // If this element is a pure wrapper (unnamed generic container with no direct
+  // text), skip it and render its children at the same depth. Keeps the layers
+  // panel focused on elements you'd actually want to edit.
+  if (el !== s.iframe.contentDocument.body && isTransparentWrapper(el)) {
+    for (const child of el.children) {
+      if (isStructuralTag(child)) continue
+      renderLayerNode(container, s, child, depth)
+    }
+    return
+  }
+
   const row = document.createElement('div')
   row.className = 'layer-row'
   if (s === activeStage && s.selected === el) row.classList.add('selected')
@@ -823,10 +855,26 @@ function renderLayerNode(container, s, el, depth) {
   container.appendChild(row)
 
   for (const child of el.children) {
-    const tag = child.tagName
-    if (tag === 'SCRIPT' || tag === 'STYLE') continue
+    if (isStructuralTag(child)) continue
     renderLayerNode(container, s, child, depth + 1)
   }
+}
+
+function isStructuralTag(el) {
+  const t = el.tagName
+  return t === 'SCRIPT' || t === 'STYLE' || t === 'LINK' || t === 'META' || t === 'NOSCRIPT' || t === 'TITLE'
+}
+
+function isTransparentWrapper(el) {
+  const t = el.tagName
+  if (t !== 'DIV' && t !== 'SECTION' && t !== 'ARTICLE' && t !== 'MAIN' && t !== 'ASIDE' && t !== 'HEADER' && t !== 'FOOTER') return false
+  if (el.id) return false
+  if (el.className && typeof el.className === 'string' && el.className.trim()) return false
+  // Has direct text? Then it's a real content element, not a wrapper.
+  for (const n of el.childNodes) {
+    if (n.nodeType === 3 && n.textContent.trim()) return false
+  }
+  return true
 }
 
 function describeElement(el) {
