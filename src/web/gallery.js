@@ -1,6 +1,7 @@
 const groupsEl = document.getElementById('groups')
 const count = document.getElementById('count')
 const empty = document.getElementById('empty')
+const hint = document.getElementById('hint')
 const newFolderBtn = document.getElementById('new-folder')
 const newDesignBtn = document.getElementById('new-design')
 
@@ -106,7 +107,9 @@ function render() {
     rendered += items.length
   }
 
-  empty.hidden = !!(files.length || folders.length)
+  const hasContent = files.length > 0 || folders.length > 0
+  empty.hidden = hasContent
+  hint.hidden = !hasContent
 }
 
 function buildGroup(dir, items) {

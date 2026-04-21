@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="gallery-body">
   <header class="top">
     <h1>htmlshop</h1>
     <span id="count" class="muted"></span>
@@ -18,11 +18,14 @@
       <button id="new-design" class="tb tb-wide">+ New design</button>
     </div>
   </header>
-  <main id="main">
-    <div id="empty" class="empty" hidden>
-      No <code>.html</code> files yet. Click <b>+ New design</b> or drop files into this folder.
+  <main id="main" class="gallery-main">
+    <div id="empty" class="empty-state" hidden>
+      <div class="empty-title">No designs yet</div>
+      <div class="empty-hint">
+        Click <b>+ New design</b> to start a blank canvas, or drop <code>.html</code> files into this folder.
+      </div>
     </div>
-    <p class="hint muted">Click any design to open it. Folders with multiple designs can be opened as a carousel.</p>
+    <p id="hint" class="hint muted" hidden>Click any design to open it. Folders with multiple designs can be opened as a carousel.</p>
     <div id="groups"></div>
   </main>
   <script type="module" src="/gallery.js"></script>
