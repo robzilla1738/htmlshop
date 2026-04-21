@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>htmlshop — editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/html-to-image.js" defer></script>
+</head>
+<body class="editor-body">
+  <header class="top">
+    <a href="/" class="back">← gallery</a>
+    <span id="filename" class="muted"></span>
+
+    <div class="toolbar">
+      <button id="undo" class="tb" title="Undo (⌘Z)" disabled>↶</button>
+      <button id="redo" class="tb" title="Redo (⌘⇧Z)" disabled>↷</button>
+
+      <div class="tb-divider"></div>
+
+      <button id="zoom-out" class="tb" title="Zoom out (⌘−)">−</button>
+      <button id="zoom-reset" class="tb tb-wide" title="Reset zoom (⌘0)">100%</button>
+      <button id="zoom-in" class="tb" title="Zoom in (⌘+)">+</button>
+      <button id="zoom-fit" class="tb" title="Fit to screen">⤢</button>
+
+      <div class="tb-divider"></div>
+
+      <button id="add-artboard" class="tb tb-wide" title="Add a new design alongside this one">+ Artboard</button>
+
+      <button id="add-image" class="tb tb-wide">+ Image</button>
+      <input type="file" id="img-input" accept="image/*" hidden>
+
+      <button id="export" class="tb tb-wide" title="Export as PNG">Export PNG</button>
+
+      <div class="tb-divider"></div>
+
+      <button id="settings-btn" class="tb" title="Overlay settings">⚙</button>
+      <div id="settings-pop" class="settings-pop" hidden>
+        <label class="settings-row">
+          <input type="checkbox" id="setting-hover" checked>
+          <span>Show hover outline</span>
+        </label>
+        <label class="settings-row">
+          <input type="checkbox" id="setting-active-border" checked>
+          <span>Active stage border</span>
+        </label>
+      </div>
+    </div>
+
+    <span id="status" class="status"></span>
+  </header>
+
+  <main class="editor-main">
+    <aside id="layers" class="layers">
+      <div class="layers-head">
+        <span class="layers-title">Layers</span>
+      </div>
+      <div id="layers-body" class="layers-body"></div>
+    </aside>
+
+    <div class="canvas" id="canvas">
+      <div class="stages" id="stages"></div>
+    </div>
+
+    <aside id="panel" class="panel">
+      <div class="empty-state">Click any element in the design to edit.</div>
+    </aside>
+  </main>
+
+  <div id="resize-overlay" class="resize-overlay" hidden>
+    <div class="rh rh-nw" data-rh="nw"></div>
+    <div class="rh rh-n"  data-rh="n"></div>
+    <div class="rh rh-ne" data-rh="ne"></div>
+    <div class="rh rh-e"  data-rh="e"></div>
+    <div class="rh rh-se" data-rh="se"></div>
+    <div class="rh rh-s"  data-rh="s"></div>
+    <div class="rh rh-sw" data-rh="sw"></div>
+    <div class="rh rh-w"  data-rh="w"></div>
+  </div>
+
+  <script type="module" src="/editor.js"></script>
+</body>
+</html>

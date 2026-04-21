@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>htmlshop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>htmlshop</h1>
+    <span id="count" class="muted"></span>
+    <div class="toolbar">
+      <button id="new-folder" class="tb tb-wide">+ New carousel</button>
+      <button id="new-design" class="tb tb-wide">+ New design</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="empty" class="empty" hidden>
+      No <code>.html</code> files yet. Click <b>+ New design</b> or drop files into this folder.
+    </div>
+    <p class="hint muted">Click any design to open it. Folders with multiple designs can be opened as a carousel.</p>
+    <div id="groups"></div>
+  </main>
+  <script type="module" src="/gallery.js"></script>
+</body>
+</html>

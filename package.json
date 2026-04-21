@@ -1,0 +1,35 @@
+{
+  "name": "htmlshop",
+  "version": "0.1.0",
+  "description": "Local visual editor for HTML design files — click to edit text, typography, and layout.",
+  "type": "module",
+  "bin": {
+    "htmlshop": "bin/htmlshop.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    ".claude-plugin",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/htmlshop.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14",
+    "html-to-image": "^1.11.13"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "html",
+    "editor",
+    "design",
+    "wysiwyg",
+    "claude-code-skill"
+  ],
+  "license": "MIT"
+}
