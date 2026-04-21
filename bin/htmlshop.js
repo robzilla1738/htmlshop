@@ -9,7 +9,8 @@ import { startServer } from '../src/server.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PKG_ROOT = resolve(__dirname, '..')
 const DEFAULT_ROOT = join(homedir(), 'htmlshop', 'projects')
-const PLUGIN_DIR = join(homedir(), '.claude', 'plugins', 'htmlshop')
+const SKILL_DIR = join(homedir(), '.claude', 'skills', 'htmlshop')
+const LEGACY_PLUGIN_DIR = join(homedir(), '.claude', 'plugins', 'htmlshop')
 
 const args = process.argv.slice(2)
 const cmd = args[0]
@@ -51,27 +52,28 @@ async function runEditor(pathArg) {
 }
 
 async function installSkill() {
-  const src = PKG_ROOT
-  const dst = PLUGIN_DIR
+  // Clean up any old plugin-style install from earlier versions.
+  if (existsSync(LEGACY_PLUGIN_DIR)) {
+    await rm(LEGACY_PLUGIN_DIR, { recursive: true, force: true })
+  }
 
-  await mkdir(dst, { recursive: true })
-
-  // Copy only the pieces Claude Code needs as a plugin:
-  // plugin.json manifest and the skill definition.
-  await cp(join(src, '.claude-plugin'), join(dst, '.claude-plugin'), { recursive: true, force: true })
-  await cp(join(src, 'skills'), join(dst, 'skills'), { recursive: true, force: true })
+  await mkdir(SKILL_DIR, { recursive: true })
+  await cp(
+    join(PKG_ROOT, 'skills', 'htmlshop', 'SKILL.md'),
+    join(SKILL_DIR, 'SKILL.md'),
+    { force: true }
+  )
 
   console.log('')
   console.log('  htmlshop skill installed')
-  console.log(`  → ${dst}`)
+  console.log(`  → ${join(SKILL_DIR, 'SKILL.md')}`)
   console.log('')
   console.log('  Next:')
-  console.log('    1. Restart Claude Code (or reload the plugin list).')
+  console.log('    1. Restart Claude Code (or run /reload-plugins).')
   console.log('    2. Try: /htmlshop make a 1080x1080 Instagram post about X')
   console.log('')
-  console.log('  Cursor users: add the instructions from')
-  console.log(`  ${join(dst, 'skills', 'htmlshop', 'SKILL.md')}`)
-  console.log('  to your project .cursor/rules/ or a global rules file.')
+  console.log('  Cursor users: run `npx htmlshop init` in a project,')
+  console.log('  or paste SKILL.md contents into Settings → Rules → User Rules.')
   console.log('')
 }
 
@@ -93,12 +95,15 @@ async function initProjectRule() {
 }
 
 async function uninstallSkill() {
-  if (!existsSync(PLUGIN_DIR)) {
-    console.log(`  Nothing to remove — ${PLUGIN_DIR} does not exist.`)
-    return
+  let removed = false
+  for (const dir of [SKILL_DIR, LEGACY_PLUGIN_DIR]) {
+    if (existsSync(dir)) {
+      await rm(dir, { recursive: true, force: true })
+      console.log(`  Removed ${dir}`)
+      removed = true
+    }
   }
-  await rm(PLUGIN_DIR, { recursive: true, force: true })
-  console.log(`  Removed ${PLUGIN_DIR}`)
+  if (!removed) console.log('  Nothing to remove.')
 }
 
 function printHelp() {
