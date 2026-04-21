@@ -9,6 +9,22 @@ htmlshop ships two pieces together:
 
 Everything runs locally. There are no accounts, telemetry, or remote htmlshop services.
 
+## Copy-Paste Setup
+
+Paste this into the terminal inside Cursor, Codex, Claude Code, Windsurf, or another AI coding IDE:
+
+```bash
+npx --yes htmlshop@latest install && npx --yes htmlshop@latest init
+```
+
+That installs the global Codex/Claude Code skill and adds the project rule that Cursor-style IDEs can read from `.cursor/rules/htmlshop.mdc`.
+
+To launch the editor after setup:
+
+```bash
+npx --yes htmlshop@latest
+```
+
 ## Install The Skill
 
 Install for Codex and Claude Code:
@@ -114,7 +130,7 @@ Editor:
 - Undo/redo per open design.
 - Zoom controls and fit-to-screen.
 - Add artboards and images.
-- Rename or delete the active artboard from the editor toolbar.
+- Rename or delete artboards from the Layers sidebar.
 - Export PNG/JPG at 1x, 2x, or 3x for the active design or all slides.
 
 Shortcuts:
