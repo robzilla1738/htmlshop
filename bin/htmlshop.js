@@ -20,6 +20,9 @@ if (cmd === 'install') {
 } else if (cmd === 'uninstall') {
   await uninstallSkill()
   process.exit(0)
+} else if (cmd === 'init') {
+  await initProjectRule()
+  process.exit(0)
 } else if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
   printHelp()
   process.exit(0)
@@ -72,6 +75,23 @@ async function installSkill() {
   console.log('')
 }
 
+async function initProjectRule() {
+  const cwd = process.cwd()
+  const cursorRulesDir = join(cwd, '.cursor', 'rules')
+  await mkdir(cursorRulesDir, { recursive: true })
+  await cp(
+    join(PKG_ROOT, 'skills', 'htmlshop', 'SKILL.md'),
+    join(cursorRulesDir, 'htmlshop.mdc'),
+    { force: true }
+  )
+  console.log('')
+  console.log(`  htmlshop rule added to ${cursorRulesDir}/htmlshop.mdc`)
+  console.log('')
+  console.log('  Cursor will pick it up automatically on next chat in this project.')
+  console.log('  Try: "make a 1080x1080 Instagram post about X using htmlshop"')
+  console.log('')
+}
+
 async function uninstallSkill() {
   if (!existsSync(PLUGIN_DIR)) {
     console.log(`  Nothing to remove — ${PLUGIN_DIR} does not exist.`)
@@ -88,8 +108,9 @@ function printHelp() {
   Usage:
     htmlshop                  Open the editor on ~/htmlshop/projects/
     htmlshop <folder>         Open the editor on a specific folder
-    htmlshop install          Install as a Claude Code skill
-    htmlshop uninstall        Remove the installed skill
+    htmlshop install          Install as a Claude Code skill (global)
+    htmlshop init             Add Cursor rule to the current project
+    htmlshop uninstall        Remove the Claude Code skill
     htmlshop version          Print version
     htmlshop help             This message
 

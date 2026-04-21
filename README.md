@@ -1,52 +1,110 @@
 # htmlshop
 
-A small local editor for HTML design files. You click stuff, it changes, and it saves back to the file. Made for the workflow of "I had Claude generate a social post, now I want to tweak the copy and nudge the headline 20px left."
+A small local editor for HTML design files. You click stuff, it changes, it saves back to the file. Made for the workflow of "I had Claude generate a social post, now I want to tweak the copy and nudge the headline 20px left."
 
-## Quick start
+Two parts:
+
+1. A CLI (`npx htmlshop`) that opens a folder of `.html` files in a visual editor.
+2. A skill for Claude Code / Cursor so you can ask your AI tool to make designs in plain English and have them open automatically.
+
+---
+
+## Paste-ready install commands
+
+### Claude Code (global)
+
+```bash
+npx htmlshop install
+```
+
+Copies the plugin into `~/.claude/plugins/htmlshop/`. Restart Claude Code and the `/htmlshop` skill becomes available in every project.
+
+### Cursor (per-project rule)
+
+In the terminal at the root of whatever project you want htmlshop available in:
+
+```bash
+npx htmlshop init
+```
+
+Creates `.cursor/rules/htmlshop.mdc` in that project. Cursor picks it up on the next chat. Run it again in each project where you want it.
+
+### Cursor (global, manual)
+
+Cursor doesn't have a file-based global rules location, but it does have a user-rules box. Paste the contents of `skills/htmlshop/SKILL.md` from this repo into:
+
+**Cursor → Settings → Rules → User Rules**
+
+Grab the file with:
+
+```bash
+curl -s https://raw.githubusercontent.com/robzilla1738/htmlshop/main/skills/htmlshop/SKILL.md | pbcopy
+```
+
+(macOS `pbcopy` puts it on your clipboard; on Linux swap for `xclip -selection clipboard`.)
+
+### Windsurf / other AI IDEs
+
+Most AI IDEs read project-level instruction files. The `init` command creates a Cursor rule, but the same file works as generic context:
+
+```bash
+npx htmlshop init
+```
+
+Or point whatever mechanism your tool uses (e.g. `.aiderrc`, `.continuerules`) at `skills/htmlshop/SKILL.md`.
+
+### Just the CLI, no AI skill
 
 ```bash
 npx htmlshop
 ```
 
-No argument means it opens your projects folder at `~/htmlshop/projects/` (created on first run). Point it somewhere else if you want:
+Opens the editor on `~/htmlshop/projects/` (created on first run). Pass a path to point it elsewhere:
 
 ```bash
 npx htmlshop ~/path/to/designs
 ```
 
-Open the URL it prints (defaults to `http://localhost:5178`). You get a gallery of every `.html` file, grouped by subfolder. Folders with 2+ designs can open as a carousel.
+### Uninstall
 
-## Use it from Claude Code / Cursor
+```bash
+npx htmlshop uninstall    # removes ~/.claude/plugins/htmlshop
+```
 
-htmlshop ships as a Claude Code plugin so you can ask the assistant to make designs in plain English and have them show up in the editor automatically:
+For Cursor, delete the `.cursor/rules/htmlshop.mdc` or the user-rule you pasted in.
+
+---
+
+## How you actually use it
+
+Once the skill is installed, in Claude Code or Cursor:
 
 ```
-/htmlshop make a 1080×1080 Instagram post titled "Truth isn't loud"
+/htmlshop make a 1080x1080 Instagram post titled "Truth isn't loud"
           using my design-system.md
 ```
 
-The assistant looks for a `design-system.md` (if you referenced one), writes a self-contained HTML file into `~/htmlshop/projects/<slug>/`, and launches the editor.
+Or any variation. The assistant:
 
-### Install the plugin
+1. Looks for a `design-system.md` if you referenced one (the path you gave, current directory, `~/htmlshop/design-system.md`).
+2. Writes a self-contained HTML file into `~/htmlshop/projects/<slug>/`.
+3. Launches `npx htmlshop <slug>` in the background.
+4. Gives you the editor URL (default `http://localhost:5178`).
 
-Until I get the marketplace listing up, clone the repo into the plugins folder and Claude Code will pick it up:
+From there you can click into any element and tweak it visually.
 
-```bash
-git clone https://github.com/robzilla1738/htmlshop ~/.claude/plugins/htmlshop
-```
+---
 
-Structure that makes it a valid plugin:
+## Projects folder
 
-```
-htmlshop/
-├── .claude-plugin/plugin.json
-└── skills/
-    └── htmlshop/SKILL.md
-```
+Everything lives under `~/htmlshop/projects/` by default.
 
-### Projects folder
+- Subfolders are carousels (multi-slide projects).
+- Loose files at the top level are standalone designs.
 
-Everything lives under `~/htmlshop/projects/`. Subfolders are carousels (multi-slide projects), loose files at the top level are standalone designs. That's the whole convention.
+That's the whole convention.
+
+---
 
 ## What the editor actually does
 
@@ -71,6 +129,8 @@ Editor: one iframe per open design, laid out horizontally. Each stage has its ow
 - Export opens a dialog: PNG or JPG, 1×/2×/3×, this design or all slides. Uses the File System Access API to let you pick the save location in Chrome/Edge; falls back to a normal download in Firefox/Safari.
 - Overlay settings (⚙): toggle hover outlines and the active-stage border.
 
+---
+
 ## Shortcuts
 
 | Action | Shortcut |
@@ -81,6 +141,8 @@ Editor: one iframe per open design, laid out horizontally. Each stage has its ow
 | Duplicate selected | ⌘D |
 | Deselect | Esc |
 
+---
+
 ## Caveats worth knowing
 
 Files get modified in place. Keep them in git or back them up before doing anything destructive.
@@ -90,6 +152,8 @@ Save re-serializes the live DOM back to the file. Attribute quoting gets normali
 Preview scaling is tuned for 1080×1080. Other dimensions work fine in the editor, but gallery previews may letterbox.
 
 The File System Access API (the "pick where to save" dialog) is Chrome/Edge only. Everywhere else it falls back to a regular download.
+
+---
 
 ## License
 
