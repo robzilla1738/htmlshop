@@ -155,6 +155,10 @@ The File System Access API (the "pick where to save" dialog) is Chrome/Edge only
 
 ---
 
+## Privacy
+
+See [PRIVACY.md](./PRIVACY.md). Short version: everything runs locally, no telemetry, no accounts. The only external request is DM Sans from Google Fonts, which you can block.
+
 ## License
 
 MIT
