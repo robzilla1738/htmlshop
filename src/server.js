@@ -84,10 +84,13 @@ export function startServer({ root, port }) {
     try {
       const abs = safeAbs(c.req.query('path'))
       if (abs === root) throw new Error('cannot delete root')
+      // rm() without recursive:true removes a single file or an empty directory.
+      // Non-empty directories will fail with ENOTEMPTY, which the client can surface.
       await rm(abs)
       return c.json({ ok: true })
     } catch (e) {
-      return c.json({ error: e.message }, 400)
+      const msg = e.code === 'ENOTEMPTY' ? 'folder is not empty' : e.message
+      return c.json({ error: msg }, 400)
     }
   })
 

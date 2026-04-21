@@ -30,12 +30,24 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin: 0;
   letter-spacing: 0.02em;
 }
+.top .logo {
+  text-decoration: none;
+  color: #e6e8ee;
+  display: inline-flex;
+  align-items: center;
+}
+.top .logo:hover h1 { color: #4f8cff; }
 .top .back {
   color: #9aa3b2;
   text-decoration: none;
-  font-size: 15px;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #1e2028;
+  background: #141620;
+  transition: border-color 0.12s, color 0.12s;
 }
-.top .back:hover { color: #e6e8ee; }
+.top .back:hover { color: #e6e8ee; border-color: #4f8cff; }
 .muted {
   color: #6b7280;
   font-size: 14px;
@@ -114,9 +126,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .folder-menu { position: relative; opacity: 1; }
 .folder-menu .card-menu-pop { right: 0; left: auto; }
 .group-empty {
-  padding: 20px 2px;
-  font-size: 14px;
-  font-style: italic;
+  padding: 4px 2px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .grid {

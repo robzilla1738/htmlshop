@@ -38,19 +38,35 @@ function sizePreview(frame, iframe) {
 await refresh()
 
 newFolderBtn.addEventListener('click', async () => {
-  const name = prompt('New carousel folder name:')
+  const name = prompt('New carousel name:')
   if (!name || !name.trim()) return
-  const res = await fetch('/api/folders', {
+  const folderName = name.trim()
+
+  const folderRes = await fetch('/api/folders', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: name.trim() })
+    body: JSON.stringify({ path: folderName })
   })
-  const json = await res.json()
-  if (!res.ok) {
-    alert('Could not create folder: ' + (json.error || 'unknown'))
+  const folderJson = await folderRes.json()
+  if (!folderRes.ok) {
+    alert('Could not create folder: ' + (folderJson.error || 'unknown'))
     return
   }
-  await refresh()
+
+  // Auto-create a blank first slide and jump straight into the editor.
+  const designRes = await fetch('/api/new-design', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder: folderJson.path })
+  })
+  const designJson = await designRes.json()
+  if (!designRes.ok) {
+    alert('Folder created, but could not create first slide: ' + (designJson.error || 'unknown'))
+    await refresh()
+    return
+  }
+
+  location.href = `/editor?file=${encodeURIComponent(designJson.path)}`
 })
 
 newDesignBtn.addEventListener('click', async () => {
@@ -154,16 +170,12 @@ function buildGroup(dir, items) {
 
   if (!items.length) {
     const emptyRow = document.createElement('div')
-    emptyRow.className = 'group-empty muted'
-    emptyRow.textContent = 'Empty folder'
-
+    emptyRow.className = 'group-empty'
     const addBtn = document.createElement('button')
     addBtn.className = 'tb'
     addBtn.textContent = '+ Add first design'
     addBtn.addEventListener('click', () => createDesignInFolder(dir))
-    emptyRow.appendChild(document.createTextNode(' '))
     emptyRow.appendChild(addBtn)
-
     section.appendChild(emptyRow)
   } else {
     const grid = document.createElement('div')
@@ -349,6 +361,24 @@ function buildFolderMenu(dir, fileCount) {
     }
     await refresh()
   }))
+  pop.appendChild(menuItem('Delete folder', async () => {
+    wrap.classList.remove('open')
+    const msg = fileCount > 0
+      ? `Delete folder "${dir}" and all ${fileCount} design${fileCount === 1 ? '' : 's'} inside? This cannot be undone.`
+      : `Delete empty folder "${dir}"?`
+    if (!confirm(msg)) return
+    const res = await fetch(`/api/file?path=${encodeURIComponent(dir)}`, { method: 'DELETE' })
+    const json = await res.json()
+    if (!res.ok) {
+      if (json.error === 'folder is not empty') {
+        alert(`Folder "${dir}" isn't empty. Move or delete the designs inside first.`)
+      } else {
+        alert('Delete failed: ' + (json.error || 'unknown'))
+      }
+      return
+    }
+    await refresh()
+  }, 'danger'))
 
   wrap.appendChild(btn)
   wrap.appendChild(pop)
