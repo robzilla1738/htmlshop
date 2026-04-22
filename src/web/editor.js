@@ -33,8 +33,12 @@ const resizeOverlay = document.getElementById('resize-overlay')
 
 const OVERLAY_STYLE_ID = '__htmlshop_overlay__'
 const SELECTED_ATTR = 'data-htmlshop-selected'
-const HIDDEN_ATTR = 'data-htmlshop-hidden'
+const LOCKED_ATTR = 'data-htmlshop-locked'
 const MAX_HISTORY = 100
+const TRANSPARENT_WRAPPER_TAGS = new Set([
+  'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'ASIDE', 'HEADER', 'FOOTER', 'NAV',
+  'FIGURE', 'PICTURE', 'A', 'SPAN'
+])
 
 const STANDARD_FONTS = [
   'system-ui, sans-serif',
@@ -64,6 +68,7 @@ const stages = []
 let activeStage = null
 let zoom = 1
 let stagesLoaded = 0
+let layerDrag = null
 
 const settings = {
   hoverOutline: true,
@@ -215,14 +220,16 @@ function refreshOverlayStyles(s) {
       outline: 2px solid #4f8cff !important;
       outline-offset: 2px !important;
     }
-    [${HIDDEN_ATTR}] {
-      display: none !important;
-    }
     ${settings.hoverOutline ? `
       *:hover:not([${SELECTED_ATTR}]) {
         outline: 1px dashed rgba(79, 140, 255, 0.55) !important;
         outline-offset: 1px !important;
         cursor: pointer !important;
+      }
+      [${LOCKED_ATTR}]:hover,
+      [${LOCKED_ATTR}] *:hover {
+        outline: none !important;
+        cursor: default !important;
       }
     ` : ''}
   `
@@ -239,6 +246,7 @@ function onStageMouseDown(e, s) {
   e.stopPropagation()
   setActiveStage(s)
   const target = e.target
+  if (isLockedForEditing(target) || isHiddenForEditing(target)) return
   selectElement(s, target)
   // Any element is draggable: static/relative elements auto-promote to absolute
   // on first move so the design layout isn't disturbed by a simple click.
@@ -260,6 +268,7 @@ function setActiveStage(s) {
 }
 
 function startDrag(s, el, startEvent) {
+  if (isLockedForEditing(el) || isHiddenForEditing(el)) return
   const doc = s.iframe.contentDocument
   const win = s.iframe.contentWindow
 
@@ -364,6 +373,7 @@ function endPointerCapture() {
 function selectElement(s, el) {
   const doc = s.iframe.contentDocument
   if (!el || el === doc.documentElement) return
+  if (el !== doc.body && (isLockedForEditing(el) || isHiddenForEditing(el))) return
   if (s.selected) s.selected.removeAttribute(SELECTED_ATTR)
   s.selected = el
   s.selected.setAttribute(SELECTED_ATTR, '')
@@ -410,6 +420,7 @@ function startResize(corner, startEvent) {
   const s = activeStage
   if (!s || !s.selected) return
   const el = s.selected
+  if (isLockedForEditing(el) || isHiddenForEditing(el)) return
   const doc = s.iframe.contentDocument
   const win = s.iframe.contentWindow
 
@@ -483,6 +494,11 @@ function cursorForCorner(c) {
 function renderPanel(s, el) {
   const cs = s.iframe.contentWindow.getComputedStyle(el)
   const tag = el.tagName.toLowerCase()
+  if (el === s.iframe.contentDocument.body) {
+    renderBodyPanel(s, el, cs)
+    return
+  }
+
   const hasChildElements = el.children.length > 0
   const cls = el.className && typeof el.className === 'string'
     ? el.className.trim().split(/\s+/).filter(Boolean).map((c) => '.' + c).join('')
@@ -590,10 +606,7 @@ function renderPanel(s, el) {
     </div>
   `
 
-  panel.querySelectorAll('[data-prop]').forEach((inp) => {
-    inp.addEventListener('input', () => applyStyleFromInput(s, el, inp))
-    inp.addEventListener('change', () => applyStyleFromInput(s, el, inp))
-  })
+  bindStyleInputs(s, el)
   panel.querySelectorAll('[data-tool]').forEach((btn) => {
     btn.addEventListener('click', () => toggleTool(s, el, btn.dataset.tool))
   })
@@ -623,6 +636,50 @@ function renderPanel(s, el) {
   panel.querySelector('#duplicate-el')?.addEventListener('click', duplicateSelected)
   panel.querySelector('#to-front')?.addEventListener('click', () => { bringToFront(s, el); renderPanel(s, el) })
   panel.querySelector('#to-back')?.addEventListener('click', () => { sendToBack(s, el); renderPanel(s, el) })
+}
+
+function renderBodyPanel(s, el, cs) {
+  const fonts = getAvailableFonts()
+  const currentFont = cs.fontFamily
+  const bgShort = el.style.background || ''
+
+  panel.innerHTML = `
+    <div class="meta meta-canvas">
+      <div class="meta-ident">
+        <span class="tag">Canvas</span>
+        <span class="cls">background</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Canvas</div>
+      ${inputField('width', cs.width, 'text')}
+      ${inputField('height', cs.height, 'text')}
+      ${selectFieldStr('overflow', cs.overflow || 'hidden', ['hidden','visible','clip','auto','scroll'])}
+    </div>
+
+    <div class="section">
+      <div class="section-title">Background</div>
+      ${colorFieldWithClear('background-color', cs.backgroundColor)}
+      ${inputField('background', bgShort, 'text')}
+      <div class="hint">Use background for gradients / images. e.g. <code>linear-gradient(135deg,#f00,#00f)</code></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Default Text</div>
+      ${fontFamilyField(currentFont, fonts)}
+      ${colorFieldWithClear('color', cs.color)}
+    </div>
+  `
+
+  bindStyleInputs(s, el)
+}
+
+function bindStyleInputs(s, el) {
+  panel.querySelectorAll('[data-prop]').forEach((inp) => {
+    inp.addEventListener('input', () => applyStyleFromInput(s, el, inp))
+    inp.addEventListener('change', () => applyStyleFromInput(s, el, inp))
+  })
 }
 
 function guessDisplayOptions(current) {
@@ -658,31 +715,21 @@ function adjustFontSize(s, el, delta) {
 }
 
 function bringToFront(s, el) {
-  const parent = el.parentElement
-  if (!parent) return
-  let maxZ = 0
-  for (const sib of parent.children) {
-    const z = parseInt(s.iframe.contentWindow.getComputedStyle(sib).zIndex, 10)
-    if (!isNaN(z)) maxZ = Math.max(maxZ, z)
-  }
-  const cs = s.iframe.contentWindow.getComputedStyle(el)
-  if (cs.position === 'static') el.style.position = 'relative'
-  el.style.zIndex = String(maxZ + 1)
+  if (!canReorderLayer(s, el)) return
+  const order = getLayerStackOrder(s)
+  if (!order.includes(el)) return
+  normalizeLayerStack(s, [el, ...order.filter((item) => item !== el)])
   scheduleSave(s)
+  renderLayers()
 }
 
 function sendToBack(s, el) {
-  const parent = el.parentElement
-  if (!parent) return
-  let minZ = 0
-  for (const sib of parent.children) {
-    const z = parseInt(s.iframe.contentWindow.getComputedStyle(sib).zIndex, 10)
-    if (!isNaN(z)) minZ = Math.min(minZ, z)
-  }
-  const cs = s.iframe.contentWindow.getComputedStyle(el)
-  if (cs.position === 'static') el.style.position = 'relative'
-  el.style.zIndex = String(minZ - 1)
+  if (!canReorderLayer(s, el)) return
+  const order = getLayerStackOrder(s)
+  if (!order.includes(el)) return
+  normalizeLayerStack(s, [...order.filter((item) => item !== el), el])
   scheduleSave(s)
+  renderLayers()
 }
 
 // ─── Field generators ──────────────────────────────────────────────────────
@@ -797,22 +844,22 @@ function applyStyleFromInput(s, el, inp) {
     const val = num === '' ? '' : `${num}${unit}`
     el.style.setProperty(prop, val)
   } else if (kind === 'color') {
-    el.style.setProperty(prop, inp.value)
     // When the user picks a background-color, make sure any existing
     // background-image (gradient, url()) doesn't hide the color.
     if (prop === 'background-color') {
-      el.style.setProperty('background-image', 'none')
       el.style.removeProperty('background')
+      el.style.setProperty('background-image', 'none')
     }
+    el.style.setProperty(prop, inp.value)
     const text = panel.querySelector(`input[data-prop="${prop}"][data-kind="color-text"]`)
     if (text) text.value = inp.value
   } else if (kind === 'color-text') {
     const v = inp.value.trim()
-    el.style.setProperty(prop, v || 'transparent')
     if (prop === 'background-color' && v) {
-      el.style.setProperty('background-image', 'none')
       el.style.removeProperty('background')
+      el.style.setProperty('background-image', 'none')
     }
+    el.style.setProperty(prop, v || 'transparent')
     const picker = panel.querySelector(`input[data-prop="${prop}"][data-kind="color"]`)
     if (picker && /^#[0-9a-f]{6}$/i.test(v)) picker.value = v
   } else if (kind === 'font-select') {
@@ -886,76 +933,337 @@ function renderLayers() {
     header.appendChild(actions)
     layersBody.appendChild(header)
 
-    renderLayerNode(layersBody, s, doc.body, 0)
+    for (const entry of collectVisualLayers(s)) {
+      renderLayerRow(layersBody, s, entry)
+    }
   }
 }
 
-function renderLayerNode(container, s, el, depth) {
-  // If this element is a pure wrapper (unnamed generic container with no direct
-  // text), skip it and render its children at the same depth. Keeps the layers
-  // panel focused on elements you'd actually want to edit.
-  if (el !== s.iframe.contentDocument.body && isTransparentWrapper(el)) {
-    for (const child of el.children) {
-      if (isStructuralTag(child)) continue
-      renderLayerNode(container, s, child, depth)
-    }
-    return
-  }
-
+function renderLayerRow(container, s, entry) {
+  const el = entry.el
+  const doc = s.iframe.contentDocument
+  const isBody = el === doc.body
+  const isHidden = el.hidden
+  const isLocked = isLayerLocked(el)
+  const canDrag = canReorderLayer(s, el)
   const row = document.createElement('div')
   row.className = 'layer-row'
+  if (isBody) row.classList.add('pinned')
+  if (entry.nested) row.classList.add('nested')
+  if (isHidden) row.classList.add('hidden-layer')
+  if (isLocked) row.classList.add('locked')
   if (s === activeStage && s.selected === el) row.classList.add('selected')
-  row.style.paddingLeft = (depth * 12 + 8) + 'px'
+
+  const grip = document.createElement('span')
+  grip.className = 'layer-grip'
+  grip.textContent = canDrag ? '⋮⋮' : ''
+  grip.title = canDrag ? 'Drag to reorder' : ''
+  if (canDrag) {
+    row.draggable = true
+    row.title = 'Click to select. Drag up or down to reorder.'
+    row.addEventListener('dragstart', (e) => {
+      if (e.target.closest('button')) {
+        e.preventDefault()
+        return
+      }
+      beginLayerRowDrag(s, el, row, e)
+    })
+    row.addEventListener('dragend', () => endLayerRowDrag(row))
+  }
 
   const eye = document.createElement('button')
-  eye.className = 'layer-eye'
-  const isHidden = el.hasAttribute(HIDDEN_ATTR)
-  eye.textContent = isHidden ? '◌' : '●'
-  eye.title = isHidden ? 'Show' : 'Hide'
+  eye.className = 'layer-icon layer-eye'
+  eye.type = 'button'
+  eye.textContent = isHidden ? '○' : '●'
+  eye.title = isBody ? 'Background stays visible' : (isHidden ? 'Show layer' : 'Hide layer')
+  eye.setAttribute('aria-label', eye.title)
+  eye.disabled = isBody
   eye.addEventListener('click', (e) => {
     e.stopPropagation()
-    if (isHidden) el.removeAttribute(HIDDEN_ATTR)
-    else el.setAttribute(HIDDEN_ATTR, '')
-    scheduleSave(s)
-    renderLayers()
+    toggleLayerVisibility(s, el)
+  })
+
+  const lock = document.createElement('button')
+  lock.className = 'layer-icon layer-lock'
+  lock.type = 'button'
+  lock.textContent = isLocked ? '🔒' : '🔓'
+  lock.title = isBody ? 'Background cannot be locked' : (isLocked ? 'Unlock layer' : 'Lock layer')
+  lock.setAttribute('aria-label', lock.title)
+  lock.disabled = isBody
+  lock.addEventListener('click', (e) => {
+    e.stopPropagation()
+    toggleLayerLock(s, el)
   })
 
   const name = document.createElement('span')
   name.className = 'layer-name'
   name.textContent = describeElement(el)
 
+  row.appendChild(grip)
   row.appendChild(eye)
+  row.appendChild(lock)
   row.appendChild(name)
-  row.addEventListener('click', () => selectElement(s, el))
+  row.addEventListener('click', () => {
+    setActiveStage(s)
+    if (isHidden || isLockedForEditing(el)) return
+    selectElement(s, el)
+  })
+  row.addEventListener('dragover', (e) => {
+    if (!layerDrag || layerDrag.s !== s || layerDrag.el === el) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    const rect = row.getBoundingClientRect()
+    const before = isBody || e.clientY < rect.top + rect.height / 2
+    setLayerDropMarker(row, before ? 'before' : 'after')
+  })
+  row.addEventListener('drop', (e) => {
+    if (!layerDrag || layerDrag.s !== s || layerDrag.el === el) return
+    e.preventDefault()
+    const rect = row.getBoundingClientRect()
+    const placement = isBody || e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    moveLayerByDrop(s, layerDrag.el, el, placement)
+    layerDrag = null
+  })
   container.appendChild(row)
+}
 
-  for (const child of el.children) {
-    if (isStructuralTag(child)) continue
-    renderLayerNode(container, s, child, depth + 1)
+function beginLayerRowDrag(s, el, row, e) {
+  layerDrag = { s, el }
+  row.classList.add('dragging')
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', describeElement(el))
+}
+
+function endLayerRowDrag(row) {
+  row.classList.remove('dragging')
+  clearLayerDropMarkers()
+  layerDrag = null
+}
+
+function setLayerDropMarker(row, placement) {
+  clearLayerDropMarkers()
+  row.classList.add(placement === 'before' ? 'drop-before' : 'drop-after')
+}
+
+function clearLayerDropMarkers() {
+  layersBody.querySelectorAll('.drop-before, .drop-after')
+    .forEach((row) => row.classList.remove('drop-before', 'drop-after'))
+}
+
+function moveLayerByDrop(s, dragged, target, placement) {
+  if (!canReorderLayer(s, dragged)) return
+  const doc = s.iframe.contentDocument
+  const order = getLayerStackOrder(s)
+  if (!order.includes(dragged)) return
+
+  const next = order.filter((el) => el !== dragged)
+  let targetIndex = target === doc.body ? next.length : next.indexOf(target)
+  if (targetIndex < 0) return
+  if (placement === 'after' && target !== doc.body) targetIndex += 1
+  next.splice(targetIndex, 0, dragged)
+
+  if (order.length === next.length && order.every((el, i) => el === next[i])) {
+    clearLayerDropMarkers()
+    return
   }
+
+  normalizeLayerStack(s, next)
+  scheduleSave(s)
+  renderLayers()
+  if (s.selected) renderPanel(s, s.selected)
+}
+
+function getLayerStackOrder(s) {
+  return collectVisualLayers(s)
+    .map((entry) => entry.el)
+    .filter((el) => canReorderLayer(s, el))
+}
+
+function normalizeLayerStack(s, orderedTopFirst) {
+  const win = s.iframe.contentWindow
+  const count = orderedTopFirst.length
+  orderedTopFirst.forEach((el, index) => {
+    const cs = win.getComputedStyle(el)
+    if (cs.position === 'static') el.style.position = 'relative'
+    el.style.zIndex = String(count - index)
+  })
+}
+
+function canReorderLayer(s, el) {
+  const doc = s.iframe.contentDocument
+  return !!el && el !== doc.body && !isLockedForEditing(el) && getLayerStackAnchor(s, el) === el
+}
+
+function toggleLayerVisibility(s, el) {
+  const doc = s.iframe.contentDocument
+  if (!el || el === doc.body) return
+  const willHide = !el.hidden
+  el.hidden = willHide
+  if (willHide) clearSelectionInside(s, el)
+  scheduleSave(s)
+  renderLayers()
+  updateResizeOverlay()
+}
+
+function toggleLayerLock(s, el) {
+  const doc = s.iframe.contentDocument
+  if (!el || el === doc.body) return
+  if (isLayerLocked(el)) {
+    el.removeAttribute(LOCKED_ATTR)
+  } else {
+    el.setAttribute(LOCKED_ATTR, '')
+    clearSelectionInside(s, el)
+  }
+  scheduleSave(s)
+  renderLayers()
+  updateResizeOverlay()
+}
+
+function clearSelectionInside(s, el) {
+  if (!s.selected || (s.selected !== el && !el.contains(s.selected))) return
+  s.selected.removeAttribute(SELECTED_ATTR)
+  s.selected = null
+  panel.innerHTML = '<div class="empty-state">Click any element in the design to edit.</div>'
+}
+
+function isLayerLocked(el) {
+  return !!el?.hasAttribute?.(LOCKED_ATTR)
+}
+
+function isLockedForEditing(el) {
+  return !!el?.closest?.(`[${LOCKED_ATTR}]`)
+}
+
+function isHiddenForEditing(el) {
+  return !!el?.closest?.('[hidden]')
+}
+
+function collectVisualLayers(s) {
+  const doc = s.iframe.contentDocument
+  const win = s.iframe.contentWindow
+  const entries = []
+  let domIndex = 0
+
+  const visit = (el) => {
+    if (isStructuralTag(el)) return
+    domIndex += 1
+
+    if (el !== doc.body && (el.hidden || isLayerLocked(el))) {
+      entries.push(layerEntry(s, el, domIndex))
+      return
+    }
+
+    if (el !== doc.body && isTransparentWrapper(el, win)) {
+      for (const child of el.children) visit(child)
+      return
+    }
+
+    if (el !== doc.body && isLayerObject(el, win)) {
+      entries.push(layerEntry(s, el, domIndex))
+    }
+
+    for (const child of el.children) visit(child)
+  }
+
+  for (const child of doc.body.children) visit(child)
+
+  entries.sort((a, b) => {
+    if (b.z !== a.z) return b.z - a.z
+    if (b.depth !== a.depth) return b.depth - a.depth
+    return b.domIndex - a.domIndex
+  })
+  entries.push({ el: doc.body, z: -Infinity, depth: 0, domIndex: -1, nested: false, pinned: true })
+  return entries
+}
+
+function layerEntry(s, el, domIndex) {
+  const win = s.iframe.contentWindow
+  const anchor = getLayerStackAnchor(s, el)
+  const z = parseInt(win.getComputedStyle(anchor).zIndex, 10)
+  return {
+    el,
+    z: isNaN(z) ? 0 : z,
+    depth: layerDepth(s, el),
+    domIndex,
+    nested: anchor !== el,
+    pinned: false
+  }
+}
+
+function getLayerStackAnchor(s, el) {
+  const doc = s.iframe.contentDocument
+  const win = s.iframe.contentWindow
+  let anchor = el
+  let parent = el.parentElement
+  while (parent && parent !== doc.body) {
+    if (!isTransparentWrapper(parent, win) && (parent.hidden || isLayerLocked(parent) || isLayerObject(parent, win))) {
+      anchor = parent
+    }
+    parent = parent.parentElement
+  }
+  return anchor
+}
+
+function layerDepth(s, el) {
+  const doc = s.iframe.contentDocument
+  let depth = 0
+  let parent = el.parentElement
+  while (parent && parent !== doc.body) {
+    depth += 1
+    parent = parent.parentElement
+  }
+  return depth
+}
+
+function isLayerObject(el, win) {
+  if (isStructuralTag(el)) return false
+  if (isReplacedLayer(el)) return true
+  if (getDirectText(el)) return true
+  if (hasVisualSurface(el, win)) return true
+  if (el.isContentEditable) return true
+  return false
 }
 
 function isStructuralTag(el) {
   const t = el.tagName
   // Hidden infrastructure (head-ish elements that somehow land in body).
   if (t === 'SCRIPT' || t === 'STYLE' || t === 'LINK' || t === 'META' || t === 'NOSCRIPT' || t === 'TITLE') return true
-  // Layout hints with no visual surface to edit — line breaks, horizontal rules,
-  // word-break hints, picture sources, template fragments. Keeping these in the
-  // layers panel is noise; the user edits the content around them instead.
+  // Layout hints with no visual surface to edit. Keeping these in the layers
+  // panel is noise; the user edits the content around them instead.
   if (t === 'BR' || t === 'HR' || t === 'WBR' || t === 'SOURCE' || t === 'TRACK' || t === 'TEMPLATE') return true
   return false
 }
 
-function isTransparentWrapper(el) {
+function isTransparentWrapper(el, win) {
+  if (!TRANSPARENT_WRAPPER_TAGS.has(el.tagName)) return false
+  if (isReplacedLayer(el)) return false
+  if (getDirectText(el)) return false
+  return !hasVisualSurface(el, win)
+}
+
+function isReplacedLayer(el) {
   const t = el.tagName
-  if (t !== 'DIV' && t !== 'SECTION' && t !== 'ARTICLE' && t !== 'MAIN' && t !== 'ASIDE' && t !== 'HEADER' && t !== 'FOOTER') return false
-  if (el.id) return false
-  if (el.className && typeof el.className === 'string' && el.className.trim()) return false
-  // Has direct text? Then it's a real content element, not a wrapper.
-  for (const n of el.childNodes) {
-    if (n.nodeType === 3 && n.textContent.trim()) return false
+  return t === 'IMG' || t === 'SVG' || t === 'CANVAS' || t === 'VIDEO' || t === 'AUDIO' ||
+    t === 'IFRAME' || t === 'BUTTON' || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT'
+}
+
+function hasVisualSurface(el, win) {
+  const cs = win.getComputedStyle(el)
+  if (cs.display === 'none') return false
+  const bg = cs.backgroundColor
+  if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') return true
+  if (cs.backgroundImage && cs.backgroundImage !== 'none') return true
+  if (cs.boxShadow && cs.boxShadow !== 'none') return true
+  if (cs.filter && cs.filter !== 'none') return true
+  if (cs.backdropFilter && cs.backdropFilter !== 'none') return true
+
+  const sides = ['Top', 'Right', 'Bottom', 'Left']
+  for (const side of sides) {
+    const width = parseFloat(cs[`border${side}Width`]) || 0
+    const style = cs[`border${side}Style`]
+    if (width > 0 && style !== 'none' && style !== 'hidden') return true
   }
-  return true
+  return false
 }
 
 function describeElement(el) {
@@ -969,7 +1277,11 @@ function describeElement(el) {
     return `🖼 ${base}`
   }
   if (tag === 'svg') return 'svg icon'
+  if (tag === 'canvas') return 'canvas'
+  if (tag === 'video') return 'video'
   if (tag === 'body') return 'body (background)'
+  const aria = el.getAttribute('aria-label') || el.getAttribute('title')
+  if (aria && aria.trim()) return `${tag} · ${aria.trim().slice(0, 36)}`
 
   // Prefer visible text — use direct text content first, then full descendant text
   const directText = getDirectText(el)
@@ -1073,8 +1385,6 @@ async function doSave(s, { skipHistory = false } = {}) {
   overlay?.remove()
   const selectedEls = [...doc.querySelectorAll(`[${SELECTED_ATTR}]`)]
   selectedEls.forEach((n) => n.removeAttribute(SELECTED_ATTR))
-  const hiddenEls = [...doc.querySelectorAll(`[${HIDDEN_ATTR}]`)]
-  hiddenEls.forEach((n) => n.removeAttribute(HIDDEN_ATTR))
 
   const doctype = doc.doctype
     ? `<!DOCTYPE ${doc.doctype.name}${doc.doctype.publicId ? ` PUBLIC "${doc.doctype.publicId}"` : ''}${doc.doctype.systemId ? ` "${doc.doctype.systemId}"` : ''}>\n`
@@ -1088,7 +1398,6 @@ async function doSave(s, { skipHistory = false } = {}) {
     doc.head.appendChild(st)
   }
   selectedEls.forEach((n) => n.setAttribute(SELECTED_ATTR, ''))
-  hiddenEls.forEach((n) => n.setAttribute(HIDDEN_ATTR, ''))
 
   try {
     const res = await fetch(`/api/file?path=${encodeURIComponent(s.file)}`, {
@@ -1215,6 +1524,7 @@ function deleteSelected() {
   if (!s) return
   const doc = s.iframe.contentDocument
   if (!s.selected || s.selected === doc.body || s.selected === doc.documentElement) return
+  if (isLockedForEditing(s.selected) || isHiddenForEditing(s.selected)) return
   s.selected.remove()
   s.selected = null
   panel.innerHTML = '<div class="empty-state">Click any element in the design to edit.</div>'
@@ -1227,8 +1537,10 @@ function duplicateSelected() {
   if (!s) return
   const doc = s.iframe.contentDocument
   if (!s.selected || s.selected === doc.body || s.selected === doc.documentElement) return
+  if (isLockedForEditing(s.selected) || isHiddenForEditing(s.selected)) return
   const clone = s.selected.cloneNode(true)
   clone.removeAttribute(SELECTED_ATTR)
+  clone.removeAttribute(LOCKED_ATTR)
   clone.querySelectorAll(`[${SELECTED_ATTR}]`).forEach((n) => n.removeAttribute(SELECTED_ATTR))
   const cs = s.iframe.contentWindow.getComputedStyle(s.selected)
   if (cs.position === 'absolute' || cs.position === 'fixed') {
@@ -1457,8 +1769,6 @@ async function renderStageToBlob(s, { format, scale }) {
   overlay?.remove()
   const selectedEls = [...doc.querySelectorAll(`[${SELECTED_ATTR}]`)]
   selectedEls.forEach((n) => n.removeAttribute(SELECTED_ATTR))
-  const hiddenEls = [...doc.querySelectorAll(`[${HIDDEN_ATTR}]`)]
-  hiddenEls.forEach((n) => n.removeAttribute(HIDDEN_ATTR))
 
   try {
     const target = doc.body
@@ -1481,7 +1791,6 @@ async function renderStageToBlob(s, { format, scale }) {
       doc.head.appendChild(st)
     }
     selectedEls.forEach((n) => n.setAttribute(SELECTED_ATTR, ''))
-    hiddenEls.forEach((n) => n.setAttribute(HIDDEN_ATTR, ''))
   }
 }
 
