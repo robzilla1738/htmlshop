@@ -1,6 +1,6 @@
 {
   "name": "htmlshop",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Local visual editor for HTML design files - click to edit text, typography, and layout.",
   "type": "module",
   "bin": {
@@ -20,7 +20,9 @@
   "scripts": {
     "start": "node bin/htmlshop.js",
     "smoke": "node scripts/smoke.js",
-    "check": "node --check src/web/editor.js && node --check src/web/gallery.js && node --check src/server.js && node --check bin/htmlshop.js && npm run smoke && npm audit --omit=dev && npm pack --dry-run"
+    "smoke:cli": "node scripts/cli-smoke.js",
+    "test:browser": "playwright test",
+    "check": "node --check src/web/editor.js && node --check src/web/gallery.js && node --check src/server.js && node --check bin/htmlshop.js && node --check scripts/cli-smoke.js && npm run smoke && npm run smoke:cli && npm run test:browser && npm audit --omit=dev && npm pack --dry-run"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -41,5 +43,8 @@
     "html-editor",
     "design-tool"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
 }

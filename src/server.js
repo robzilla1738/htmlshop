@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -99,9 +99,12 @@ export function startServer({ root, port, host = '127.0.0.1', open = false } = {
     try {
       const abs = safeAbs(c.req.query('path'))
       if (abs === root) throw new Error('cannot delete root')
-      // rm() without recursive:true removes a single file or an empty directory.
-      // Non-empty directories will fail with ENOTEMPTY, which the client can surface.
-      await rm(abs)
+      const info = await stat(abs)
+      if (info.isDirectory()) {
+        await rmdir(abs)
+      } else {
+        await rm(abs)
+      }
       return c.json({ ok: true })
     } catch (e) {
       const msg = e.code === 'ENOTEMPTY' ? 'folder is not empty' : e.message
@@ -294,8 +297,7 @@ function cleanRelativePath(value, opts = {}) {
 }
 
 function validateHtmlPath(path) {
-  const ext = extname(path).toLowerCase()
-  if (ext !== '.html' && ext !== '.htm') throw new Error('design files must end in .html')
+  if (!isHtmlFileName(path)) throw new Error('design files must end in .html or .htm')
 }
 
 function assertInsideRoot(abs, root) {
@@ -359,7 +361,7 @@ async function walkHtml(dir) {
     if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'assets') continue
     const p = join(dir, e.name)
     if (e.isDirectory()) out.push(...(await walkHtml(p)))
-    else if (e.isFile() && extname(e.name).toLowerCase() === '.html') out.push(p)
+    else if (e.isFile() && isHtmlFileName(e.name)) out.push(p)
   }
   return out
 }
@@ -372,11 +374,16 @@ async function listHtmlNames(dir) {
   try {
     const entries = await readdir(dir, { withFileTypes: true })
     return entries
-      .filter((e) => e.isFile() && extname(e.name).toLowerCase() === '.html')
+      .filter((e) => e.isFile() && isHtmlFileName(e.name))
       .map((e) => e.name)
   } catch {
     return []
   }
+}
+
+function isHtmlFileName(name) {
+  const ext = extname(name).toLowerCase()
+  return ext === '.html' || ext === '.htm'
 }
 
 function pickNextSlideName(existing) {

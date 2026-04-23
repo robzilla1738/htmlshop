@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, statSync } from 'node:fs'
-import { access, cp, mkdir, readdir, rm } from 'node:fs/promises'
+import { access, cp, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -69,9 +69,11 @@ async function runEditor(rawArgs) {
 }
 
 function parseRunArgs(rawArgs) {
+  const envHost = process.env.HOST
+  const envPort = process.env.PORT
   const opts = {
-    host: process.env.HOST || DEFAULT_HOST,
-    port: Number(process.env.PORT) || DEFAULT_PORT,
+    host: envHost === undefined ? DEFAULT_HOST : parseHost(envHost, 'HOST'),
+    port: envPort === undefined ? DEFAULT_PORT : parsePort(envPort),
     portExplicit: false,
     noOpen: false,
     path: ''
@@ -84,9 +86,9 @@ function parseRunArgs(rawArgs) {
     } else if (arg === '--host') {
       const value = rawArgs[++i]
       if (!value) throw new Error('--host requires a value')
-      opts.host = value
+      opts.host = parseHost(value, '--host')
     } else if (arg.startsWith('--host=')) {
-      opts.host = arg.slice('--host='.length)
+      opts.host = parseHost(arg.slice('--host='.length), '--host')
     } else if (arg === '--port') {
       const value = rawArgs[++i]
       if (!value) throw new Error('--port requires a value')
@@ -104,6 +106,12 @@ function parseRunArgs(rawArgs) {
     }
   }
   return opts
+}
+
+function parseHost(value, label) {
+  const host = String(value || '').trim()
+  if (!host) throw new Error(`${label} requires a value`)
+  return host
 }
 
 function parsePort(value) {
@@ -236,18 +244,27 @@ async function doctor() {
   const pkg = await readPackage()
   const vendor = join(PKG_ROOT, 'node_modules', 'html-to-image', 'dist', 'html-to-image.js')
   const defaultPortFree = await isPortFree(DEFAULT_HOST, DEFAULT_PORT)
+  const defaultRootExists = await fileExists(DEFAULT_ROOT)
+  const vendorExists = await fileExists(vendor)
+  const codexSkill = join(skillDirFor('codex'), 'SKILL.md')
+  const claudeSkill = join(skillDirFor('claude'), 'SKILL.md')
+  const cursorRule = join(process.cwd(), '.cursor', 'rules', 'htmlshop.mdc')
+  const codexSkillExists = await fileExists(codexSkill)
+  const claudeSkillExists = await fileExists(claudeSkill)
+  const cursorRuleExists = await fileExists(cursorRule)
 
   console.log('')
   console.log('  htmlshop doctor')
   console.log(`  package:       ${pkg.name}@${pkg.version}`)
   console.log(`  node:          ${process.version}`)
   console.log(`  project root:  ${PKG_ROOT}`)
-  console.log(`  default files: ${DEFAULT_ROOT}`)
+  console.log(`  default files: ${defaultRootExists ? 'present' : 'missing'} (${DEFAULT_ROOT})`)
   console.log(`  default URL:   http://${DEFAULT_HOST}:${DEFAULT_PORT}`)
   console.log(`  port ${DEFAULT_PORT}:     ${defaultPortFree ? 'available' : 'in use'}`)
-  console.log(`  vendor file:   ${(await fileExists(vendor)) ? 'present' : 'missing'} (${vendor})`)
-  console.log(`  Codex skill:   ${skillDirFor('codex')}`)
-  console.log(`  Claude skill:  ${skillDirFor('claude')}`)
+  console.log(`  vendor file:   ${vendorExists ? 'present' : 'missing'} (${vendor})`)
+  console.log(`  Codex skill:   ${codexSkillExists ? 'installed' : 'missing'} (${codexSkill})`)
+  console.log(`  Claude skill:  ${claudeSkillExists ? 'installed' : 'missing'} (${claudeSkill})`)
+  console.log(`  project rule:  ${cursorRuleExists ? 'present' : 'missing'} (${cursorRule})`)
   console.log('')
 }
 
@@ -261,8 +278,8 @@ async function fileExists(path) {
 }
 
 async function readPackage() {
-  const pkg = await import('../package.json', { with: { type: 'json' } })
-  return pkg.default
+  const raw = await readFile(join(PKG_ROOT, 'package.json'), 'utf8')
+  return JSON.parse(raw)
 }
 
 function printHelp() {

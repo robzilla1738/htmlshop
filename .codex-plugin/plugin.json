@@ -1,6 +1,6 @@
 {
   "name": "htmlshop",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Local visual editor for HTML design files. Click elements to edit text, fonts, layout, and backgrounds. Layers panel, transform handles, carousel multi-edit, PNG/JPG export.",
   "author": {
     "name": "Robert Courson"

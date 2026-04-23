@@ -30,10 +30,14 @@ const settingsPop = document.getElementById('settings-pop')
 const settingHover = document.getElementById('setting-hover')
 const settingActiveBorder = document.getElementById('setting-active-border')
 const resizeOverlay = document.getElementById('resize-overlay')
+const toggleLayersBtn = document.getElementById('toggle-layers')
+const togglePanelBtn = document.getElementById('toggle-panel')
 
 const OVERLAY_STYLE_ID = '__htmlshop_overlay__'
 const SELECTED_ATTR = 'data-htmlshop-selected'
+const HIDDEN_ATTR = 'data-htmlshop-hidden'
 const LOCKED_ATTR = 'data-htmlshop-locked'
+const TRANSIENT_ATTRS = [SELECTED_ATTR, HIDDEN_ATTR, LOCKED_ATTR]
 const MAX_HISTORY = 100
 const TRANSPARENT_WRAPPER_TAGS = new Set([
   'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'ASIDE', 'HEADER', 'FOOTER', 'NAV',
@@ -69,6 +73,7 @@ let activeStage = null
 let zoom = 1
 let stagesLoaded = 0
 let layerDrag = null
+let modalSeq = 0
 
 const settings = {
   hoverOutline: true,
@@ -125,6 +130,8 @@ addImageBtn.addEventListener('click', () => imgInput.click())
 imgInput.addEventListener('change', onImagePicked)
 exportBtn.addEventListener('click', exportPng)
 addArtboardBtn.addEventListener('click', addArtboard)
+toggleLayersBtn?.addEventListener('click', () => toggleCompactPanel('layers'))
+togglePanelBtn?.addEventListener('click', () => toggleCompactPanel('properties'))
 
 settingsBtn.addEventListener('click', (e) => {
   e.stopPropagation()
@@ -232,6 +239,9 @@ function refreshOverlayStyles(s) {
         cursor: default !important;
       }
     ` : ''}
+    [${HIDDEN_ATTR}] {
+      display: none !important;
+    }
   `
   doc.head.appendChild(style)
 }
@@ -265,6 +275,24 @@ function setActiveStage(s) {
   stages.forEach((st) => st.wrap.classList.toggle('active', st === s))
   renderLayers()
   updateResizeOverlay()
+}
+
+function toggleCompactPanel(panelName) {
+  const layersOpen = panelName === 'layers' ? !document.body.classList.contains('show-layers') : false
+  const panelOpen = panelName === 'properties' ? !document.body.classList.contains('show-properties') : false
+  document.body.classList.toggle('show-layers', layersOpen)
+  document.body.classList.toggle('show-properties', panelOpen)
+  syncCompactPanelButtons()
+}
+
+function closeCompactPanels() {
+  document.body.classList.remove('show-layers', 'show-properties')
+  syncCompactPanelButtons()
+}
+
+function syncCompactPanelButtons() {
+  toggleLayersBtn?.setAttribute('aria-expanded', String(document.body.classList.contains('show-layers')))
+  togglePanelBtn?.setAttribute('aria-expanded', String(document.body.classList.contains('show-properties')))
 }
 
 function startDrag(s, el, startEvent) {
@@ -943,7 +971,7 @@ function renderLayerRow(container, s, entry) {
   const el = entry.el
   const doc = s.iframe.contentDocument
   const isBody = el === doc.body
-  const isHidden = el.hidden
+  const isHidden = isLayerHidden(el)
   const isLocked = isLayerLocked(el)
   const canDrag = canReorderLayer(s, el)
   const row = document.createElement('div')
@@ -1097,10 +1125,10 @@ function canReorderLayer(s, el) {
 function toggleLayerVisibility(s, el) {
   const doc = s.iframe.contentDocument
   if (!el || el === doc.body) return
-  const willHide = !el.hidden
-  el.hidden = willHide
+  const willHide = !isLayerHidden(el)
+  if (willHide) el.setAttribute(HIDDEN_ATTR, '')
+  else el.removeAttribute(HIDDEN_ATTR)
   if (willHide) clearSelectionInside(s, el)
-  scheduleSave(s)
   renderLayers()
   updateResizeOverlay()
 }
@@ -1114,9 +1142,12 @@ function toggleLayerLock(s, el) {
     el.setAttribute(LOCKED_ATTR, '')
     clearSelectionInside(s, el)
   }
-  scheduleSave(s)
   renderLayers()
   updateResizeOverlay()
+}
+
+function isLayerHidden(el) {
+  return !!el?.hasAttribute?.(HIDDEN_ATTR)
 }
 
 function clearSelectionInside(s, el) {
@@ -1135,7 +1166,7 @@ function isLockedForEditing(el) {
 }
 
 function isHiddenForEditing(el) {
-  return !!el?.closest?.('[hidden]')
+  return !!el?.closest?.(`[${HIDDEN_ATTR}]`)
 }
 
 function collectVisualLayers(s) {
@@ -1148,7 +1179,7 @@ function collectVisualLayers(s) {
     if (isStructuralTag(el)) return
     domIndex += 1
 
-    if (el !== doc.body && (el.hidden || isLayerLocked(el))) {
+    if (el !== doc.body && (isLayerHidden(el) || isLayerLocked(el))) {
       entries.push(layerEntry(s, el, domIndex))
       return
     }
@@ -1196,7 +1227,7 @@ function getLayerStackAnchor(s, el) {
   let anchor = el
   let parent = el.parentElement
   while (parent && parent !== doc.body) {
-    if (!isTransparentWrapper(parent, win) && (parent.hidden || isLayerLocked(parent) || isLayerObject(parent, win))) {
+    if (!isTransparentWrapper(parent, win) && (isLayerHidden(parent) || isLayerLocked(parent) || isLayerObject(parent, win))) {
       anchor = parent
     }
     parent = parent.parentElement
@@ -1315,10 +1346,7 @@ function getDirectText(el) {
 function recordHistory(s) {
   const doc = s.iframe.contentDocument
   if (!doc) return
-  const sel = [...doc.querySelectorAll(`[${SELECTED_ATTR}]`)]
-  sel.forEach((n) => n.removeAttribute(SELECTED_ATTR))
-  const snap = doc.body.innerHTML
-  sel.forEach((n) => n.setAttribute(SELECTED_ATTR, ''))
+  const snap = withEditorArtifactsStripped(doc, () => doc.body.innerHTML)
 
   if (s.history[s.historyIndex] === snap) return
   s.history.length = s.historyIndex + 1
@@ -1378,26 +1406,12 @@ async function doSave(s, { skipHistory = false } = {}) {
   if (!skipHistory) recordHistory(s)
 
   const doc = s.iframe.contentDocument
-
-  // Strip editor-only artifacts for serialization
-  const overlay = doc.getElementById(OVERLAY_STYLE_ID)
-  const overlayText = overlay?.textContent ?? null
-  overlay?.remove()
-  const selectedEls = [...doc.querySelectorAll(`[${SELECTED_ATTR}]`)]
-  selectedEls.forEach((n) => n.removeAttribute(SELECTED_ATTR))
-
-  const doctype = doc.doctype
-    ? `<!DOCTYPE ${doc.doctype.name}${doc.doctype.publicId ? ` PUBLIC "${doc.doctype.publicId}"` : ''}${doc.doctype.systemId ? ` "${doc.doctype.systemId}"` : ''}>\n`
-    : '<!doctype html>\n'
-  const content = doctype + doc.documentElement.outerHTML
-
-  if (overlayText) {
-    const st = doc.createElement('style')
-    st.id = OVERLAY_STYLE_ID
-    st.textContent = overlayText
-    doc.head.appendChild(st)
-  }
-  selectedEls.forEach((n) => n.setAttribute(SELECTED_ATTR, ''))
+  const content = withEditorArtifactsStripped(doc, () => {
+    const doctype = doc.doctype
+      ? `<!DOCTYPE ${doc.doctype.name}${doc.doctype.publicId ? ` PUBLIC "${doc.doctype.publicId}"` : ''}${doc.doctype.systemId ? ` "${doc.doctype.systemId}"` : ''}>\n`
+      : '<!doctype html>\n'
+    return doctype + doc.documentElement.outerHTML
+  })
 
   try {
     const res = await fetch(`/api/file?path=${encodeURIComponent(s.file)}`, {
@@ -1540,8 +1554,11 @@ function duplicateSelected() {
   if (isLockedForEditing(s.selected) || isHiddenForEditing(s.selected)) return
   const clone = s.selected.cloneNode(true)
   clone.removeAttribute(SELECTED_ATTR)
+  clone.removeAttribute(HIDDEN_ATTR)
   clone.removeAttribute(LOCKED_ATTR)
-  clone.querySelectorAll(`[${SELECTED_ATTR}]`).forEach((n) => n.removeAttribute(SELECTED_ATTR))
+  for (const attr of TRANSIENT_ATTRS) {
+    clone.querySelectorAll(`[${attr}]`).forEach((n) => n.removeAttribute(attr))
+  }
   const cs = s.iframe.contentWindow.getComputedStyle(s.selected)
   if (cs.position === 'absolute' || cs.position === 'fixed') {
     clone.style.top = (parseFloat(cs.top) || 0) + 20 + 'px'
@@ -1669,14 +1686,10 @@ function exportPng() {
 
 function openExportDialog() {
   const restoreFocus = document.activeElement
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-
   const multi = stages.length > 1
-  overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-title">
-      <div class="modal-head" id="export-title">Export</div>
-      <div class="modal-body">
+  const overlay = createModal({
+    title: 'Export',
+    body: `
         <div class="modal-section-title">Scope</div>
         <div class="export-scope">
           <label><input type="radio" name="scope" value="active" checked> Active design only</label>
@@ -1694,14 +1707,13 @@ function openExportDialog() {
           <button type="button" class="choice-btn" data-value="3">3× (hi-res)</button>
         </div>
         <div class="hint">${supportsFilePicker() ? 'You will be prompted to choose a save location.' : 'Files will be downloaded via your browser.'}</div>
-      </div>
-      <div class="modal-foot">
-        <button class="tb" id="export-cancel">Cancel</button>
-        <button class="tb tb-primary" id="export-go">Export</button>
-      </div>
-    </div>
-  `
-  document.body.appendChild(overlay)
+    `,
+    footer: `
+      <button class="tb" data-modal-cancel>Cancel</button>
+      <button class="tb tb-primary" id="export-go">Export</button>
+    `,
+    restoreFocus
+  })
 
   overlay.querySelectorAll('.export-choice').forEach((group) => {
     group.addEventListener('click', (e) => {
@@ -1710,23 +1722,11 @@ function openExportDialog() {
       group.querySelectorAll('.choice-btn').forEach((b) => b.classList.toggle('active', b === btn))
     })
   })
-  const close = () => {
-    overlay.remove()
-    if (restoreFocus && typeof restoreFocus.focus === 'function') restoreFocus.focus()
-  }
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
-  overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      close()
-    }
-  })
-  overlay.querySelector('#export-cancel').addEventListener('click', close)
   overlay.querySelector('#export-go').addEventListener('click', async () => {
     const format = overlay.querySelector('[data-group="format"] .active').dataset.value
     const scale = Number(overlay.querySelector('[data-group="scale"] .active').dataset.value)
     const scope = overlay.querySelector('input[name="scope"]:checked').value
-    close()
+    closeModal(overlay, restoreFocus)
     await runExport({ format, scale, scope })
   })
   overlay.querySelector('#export-go')?.focus()
@@ -1764,13 +1764,7 @@ async function runExport({ format, scale, scope }) {
 async function renderStageToBlob(s, { format, scale }) {
   const doc = s.iframe.contentDocument
   const win = s.iframe.contentWindow
-  const overlay = doc.getElementById(OVERLAY_STYLE_ID)
-  const overlayText = overlay?.textContent ?? null
-  overlay?.remove()
-  const selectedEls = [...doc.querySelectorAll(`[${SELECTED_ATTR}]`)]
-  selectedEls.forEach((n) => n.removeAttribute(SELECTED_ATTR))
-
-  try {
+  return await withEditorArtifactsStripped(doc, async () => {
     const target = doc.body
     const width = s.naturalW || parseFloat(win.getComputedStyle(target).width) || target.scrollWidth || 1080
     const height = s.naturalH || parseFloat(win.getComputedStyle(target).height) || target.scrollHeight || 1080
@@ -1783,14 +1777,46 @@ async function renderStageToBlob(s, { format, scale }) {
 
     const res = await fetch(dataUrl)
     return await res.blob()
-  } finally {
-    if (overlayText) {
+  })
+}
+
+function withEditorArtifactsStripped(doc, fn) {
+  const overlay = doc.getElementById(OVERLAY_STYLE_ID)
+  const overlayText = overlay?.textContent ?? null
+  overlay?.remove()
+
+  const attrStates = []
+  for (const attr of TRANSIENT_ATTRS) {
+    for (const el of doc.querySelectorAll(`[${attr}]`)) {
+      attrStates.push({ el, attr, value: el.getAttribute(attr) })
+      el.removeAttribute(attr)
+    }
+  }
+
+  const restore = () => {
+    if (overlayText !== null && !doc.getElementById(OVERLAY_STYLE_ID)) {
       const st = doc.createElement('style')
       st.id = OVERLAY_STYLE_ID
       st.textContent = overlayText
       doc.head.appendChild(st)
     }
-    selectedEls.forEach((n) => n.setAttribute(SELECTED_ATTR, ''))
+    for (const { el, attr, value } of attrStates) {
+      if (!el.isConnected) continue
+      if (value === null) el.setAttribute(attr, '')
+      else el.setAttribute(attr, value)
+    }
+  }
+
+  try {
+    const result = fn()
+    if (result && typeof result.then === 'function') {
+      return result.finally(restore)
+    }
+    restore()
+    return result
+  } catch (err) {
+    restore()
+    throw err
   }
 }
 
@@ -1849,6 +1875,11 @@ function downloadBlob(blob, filename) {
 // ─── Keyboard ──────────────────────────────────────────────────────────────
 
 function onParentKey(e) {
+  if (e.key === 'Escape' && (document.body.classList.contains('show-layers') || document.body.classList.contains('show-properties'))) {
+    e.preventDefault()
+    closeCompactPanels()
+    return
+  }
   if (handleUndoRedo(e)) return
   if (isTyping(e.target)) return
   handleZoomKeys(e)
@@ -1907,6 +1938,12 @@ function toast(message, state = 'error') {
   }
   const el = document.createElement('div')
   el.className = `toast ${state}`
+  if (state === 'error') {
+    el.setAttribute('role', 'alert')
+  } else {
+    el.setAttribute('role', 'status')
+    el.setAttribute('aria-live', 'polite')
+  }
   el.textContent = message
   wrap.appendChild(el)
   setTimeout(() => el.remove(), state === 'error' ? 5200 : 2600)
@@ -1972,12 +2009,13 @@ function confirmDialog({ title, message, confirmText = 'OK', danger = false }) {
 }
 
 function createModal({ title, body, footer, restoreFocus }) {
+  const id = `modal-${++modalSeq}`
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-head" id="modal-title">${escapeHtml(title)}</div>
-      <div class="modal-body">${body}</div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${id}-title" aria-describedby="${id}-body">
+      <div class="modal-head" id="${id}-title">${escapeHtml(title)}</div>
+      <div class="modal-body" id="${id}-body">${body}</div>
       <div class="modal-foot">${footer}</div>
     </div>
   `
@@ -1991,10 +2029,27 @@ function createModal({ title, body, footer, restoreFocus }) {
     if (e.key === 'Escape') {
       e.preventDefault()
       cancel()
+    } else if (e.key === 'Tab') {
+      trapModalFocus(overlay, e)
     }
   })
   document.body.appendChild(overlay)
   return overlay
+}
+
+function trapModalFocus(overlay, e) {
+  const focusable = [...overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && el.offsetParent !== null)
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
 }
 
 function closeModal(overlay, restoreFocus) {

@@ -19,7 +19,7 @@ Default location: `~/htmlshop/projects/`. Gets created the first time `npx htmls
 Convention inside that folder:
 
 - Subfolders are carousels or multi-slide projects. e.g. `~/htmlshop/projects/apologetics-series/slide-1.html`, `slide-2.html`.
-- Loose HTML files at the top level are standalone designs.
+- Loose `.html` or `.htm` files at the top level are standalone designs.
 
 When creating a new design, write it under `~/htmlshop/projects/<slug>/`. Pick a kebab-case slug from the user's request. One file per design. For a carousel, write `slide-1.html`, `slide-2.html`, etc. into the same subfolder.
 
@@ -29,7 +29,7 @@ When the user asks for a new design in natural language, like *"/htmlshop create
 
 1. Look for the design system if they mentioned one. Check the exact path they gave, then the current directory (`./design-system.md`, `./brand.md`, `./BRAND.md`), then `~/htmlshop/design-system.md`. If you find it, read it and pull out fonts, colors, spacing, and tone. If they referenced one and you can't find it, ask where it is. If they didn't reference one, use sensible defaults (DM Sans, neutral palette, 1080×1080).
 
-2. Pick a slug and filename. Kebab-case from intent. Standalone goes to `~/htmlshop/projects/<slug>.html`. Carousel goes to `~/htmlshop/projects/<slug>/slide-1.html` and so on.
+2. Pick a slug and filename. Kebab-case from intent. Standalone goes to `~/htmlshop/projects/<slug>.html`. Carousel goes to `~/htmlshop/projects/<slug>/slide-1.html` and so on. Prefer `.html`; `.htm` is accepted for existing files.
 
 3. Write the HTML. Constraints:
    - One `.html` file. All CSS inline in a `<style>` block. No external JS.
@@ -66,7 +66,7 @@ If the user just wants to open what they already have ("open htmlshop", "edit my
 - Properties panel on the right: text + B/I/U, typography with a font-family dropdown auto-filled from your designs + web standards, layout (display, position, dimensions, overflow, visibility), background (color picker + shorthand for gradients), border + effects + blend modes.
 - ⌘Z / ⌘⇧Z undo per stage (100 steps). Zoom with ⌘− / ⌘+ / ⌘0.
 - `+ Artboard` adds a new slide next to the open one(s).
-- Rename/Delete in the toolbar renames or removes the active artboard file.
+- Rename/Delete in the Layers sidebar renames or removes the chosen artboard file.
 - `+ Image` uploads to `<folder>/assets/` and places it.
 - Export: pick PNG/JPG, 1×/2×/3×, this design or all slides, save location (via the browser File System Access API when available).
 

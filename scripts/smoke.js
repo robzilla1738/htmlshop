@@ -41,8 +41,19 @@ try {
   })
   assert(res.ok, 'writes design file')
 
+  const htmPath = 'deck/legacy.htm'
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent(htmPath)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content: updated })
+  })
+  assert(res.ok, 'writes .htm design file')
+
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent(htmPath)}`)
+  assert(res.ok && /<html/i.test(res.data.content), 'reads .htm design file')
+
   res = await jsonFetch(`${base}/api/files`)
-  assert(res.ok && res.data.some((f) => f.path === first), 'lists design file')
+  assert(res.ok && res.data.some((f) => f.path === first), 'lists .html design file')
+  assert(res.ok && res.data.some((f) => f.path === htmPath), 'lists .htm design file')
 
   res = await jsonFetch(`${base}/api/new-design`, {
     method: 'POST',
@@ -57,11 +68,47 @@ try {
   })
   assert(!res.ok && /destination already exists/.test(res.error), 'rejects move overwrite')
 
+  res = await jsonFetch(`${base}/api/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ path: 'archive' })
+  })
+  assert(res.ok && res.data.path === 'archive', 'creates second folder')
+
+  res = await jsonFetch(`${base}/api/move`, {
+    method: 'POST',
+    body: JSON.stringify({ from: 'deck', to: 'archive' })
+  })
+  assert(!res.ok && /destination already exists/.test(res.error), 'rejects folder move overwrite')
+
   res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('../package.json')}`)
   assert(!res.ok, 'rejects path traversal')
 
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('deck/../package.json')}`)
+  assert(!res.ok, 'rejects encoded path traversal')
+
   res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('/tmp/design.html')}`)
   assert(!res.ok, 'rejects absolute paths')
+
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('bad\0name.html')}`)
+  assert(!res.ok, 'rejects null bytes')
+
+  res = await jsonFetch(`${base}/api/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ path: 'bad:name' })
+  })
+  assert(!res.ok, 'rejects unsafe folder name')
+
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('deck')}`, { method: 'DELETE' })
+  assert(!res.ok && /folder is not empty/.test(res.error), 'rejects non-empty folder delete')
+
+  res = await jsonFetch(`${base}/api/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ path: 'empty-folder' })
+  })
+  assert(res.ok, 'creates empty folder')
+
+  res = await jsonFetch(`${base}/api/file?path=${encodeURIComponent('empty-folder')}`, { method: 'DELETE' })
+  assert(res.ok, 'deletes empty folder')
 
   res = await jsonFetch(`${base}/api/assets`, {
     method: 'POST',
@@ -71,6 +118,15 @@ try {
     })
   })
   assert(res.ok && /^assets\//.test(res.data.path), 'uploads allowed image asset')
+
+  res = await jsonFetch(`${base}/api/assets`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'bad name!.png',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+    })
+  })
+  assert(res.ok && /^assets\/\d+-bad_name_\.png$/.test(res.data.path), 'sanitizes asset filename')
 
   res = await jsonFetch(`${base}/api/assets`, {
     method: 'POST',

@@ -4,7 +4,7 @@ A small local editor for HTML design files. You open a folder, click elements in
 
 htmlshop ships two pieces together:
 
-1. `npx htmlshop`, a local Node server and browser editor for folders of `.html` designs.
+1. `npx htmlshop`, a local Node server and browser editor for folders of `.html`/`.htm` designs.
 2. A reusable AI-tool skill/rule that tells Codex, Claude Code, Cursor, and similar IDEs how to generate fixed-size HTML designs and launch the editor.
 
 Everything runs locally. There are no accounts, telemetry, or remote htmlshop services.
@@ -100,13 +100,13 @@ using my design-system.md
 The assistant should:
 
 1. Read a referenced design system if one exists.
-2. Write one or more self-contained `.html` files under `~/htmlshop/projects/`.
+2. Write one or more self-contained `.html` files under `~/htmlshop/projects/`; `.htm` is also accepted.
 3. Launch `npx htmlshop <project-folder>` in the background.
 4. Give you the local editor URL.
 
 Projects convention:
 
-- Loose `.html` files in `~/htmlshop/projects/` are standalone designs.
+- Loose `.html` or `.htm` files in `~/htmlshop/projects/` are standalone designs.
 - Subfolders are carousels or multi-slide projects.
 - Uploaded images are saved under `<root>/assets/`.
 
@@ -145,7 +145,7 @@ Shortcuts:
 
 ## Design File Shape
 
-htmlshop works best with single-file fixed canvases:
+htmlshop works best with single-file fixed canvases. Use `.html` by default; `.htm` is accepted for existing files.
 
 ```html
 <!doctype html>
@@ -182,11 +182,20 @@ See [PRIVACY.md](./PRIVACY.md). Short version: htmlshop serves files from your m
 
 ```bash
 npm install
+npx playwright install chromium
 npm run check
 node bin/htmlshop.js --no-open
 ```
 
-`npm run check` performs syntax checks, runs a local smoke test against a temporary folder, runs `npm audit --omit=dev`, and verifies package contents with `npm pack --dry-run`.
+`npm run check` performs syntax checks, runs a local smoke test against a temporary folder, runs Playwright browser reliability tests, runs `npm audit --omit=dev`, and verifies package contents with `npm pack --dry-run`.
+
+Useful targeted checks:
+
+```bash
+npm run smoke
+npm run smoke:cli
+npm run test:browser
+```
 
 Manual release checklist:
 
@@ -194,10 +203,12 @@ Manual release checklist:
 2. New design and new carousel creation.
 3. Open single design and multi-slide carousel.
 4. Select, drag, resize, duplicate, delete, undo, redo.
-5. Rename and move conflict handling.
-6. Upload image and save.
-7. Export PNG and JPG at 1x/2x with correct dimensions.
-8. `htmlshop install`, `install codex`, `install claude`, `init`, `doctor`, and `--no-open`.
+5. Hide/lock a layer, save another edit, reload, and confirm editor-only `data-htmlshop-*` artifacts were not saved.
+6. Rename and move conflict handling.
+7. Upload image and save.
+8. Export PNG and JPG at 1x/2x with correct dimensions.
+9. Keyboard checks: tab through gallery menus, modals trap focus, Esc closes dialogs/drawers.
+10. `htmlshop install`, `install codex`, `install claude`, `init`, `doctor`, and `--no-open`.
 
 ## License
 

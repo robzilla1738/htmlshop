@@ -9,6 +9,7 @@ const newDesignBtn = document.getElementById('new-design')
 let files = []
 let folders = []
 let rootPath = ''
+let modalSeq = 0
 
 // Scale each card's preview iframe so the design fills the card.
 // The design's natural size is read from its body on load, then scaled.
@@ -89,7 +90,7 @@ newDesignBtn.addEventListener('click', async () => {
 
 document.addEventListener('click', (e) => {
   document.querySelectorAll('.card-menu').forEach((m) => {
-    if (!m.contains(e.target)) m.classList.remove('open')
+    if (!m.contains(e.target)) setMenuOpen(m, false)
   })
 })
 
@@ -212,10 +213,14 @@ async function createDesignInFolder(folder) {
 }
 
 function buildCard(f) {
-  const card = document.createElement('a')
+  const card = document.createElement('div')
   card.className = 'card'
-  card.href = `/editor?file=${encodeURIComponent(f.path)}`
   card.dataset.path = f.path
+
+  const openLink = document.createElement('a')
+  openLink.className = 'card-link'
+  openLink.href = `/editor?file=${encodeURIComponent(f.path)}`
+  openLink.setAttribute('aria-label', `Open ${f.name}`)
 
   const frame = document.createElement('div')
   frame.className = 'frame'
@@ -239,9 +244,10 @@ function buildCard(f) {
     if (w && h) label.textContent = `${f.name}  ·  ${w} x ${h}`
   })
 
+  openLink.appendChild(frame)
+  openLink.appendChild(label)
   card.appendChild(buildCardMenu(f))
-  card.appendChild(frame)
-  card.appendChild(label)
+  card.appendChild(openLink)
   return card
 }
 
@@ -254,34 +260,37 @@ function buildCardMenu(f) {
   btn.textContent = '...'
   btn.title = 'Actions'
   btn.setAttribute('aria-label', `Actions for ${f.name}`)
+  btn.setAttribute('aria-haspopup', 'menu')
+  btn.setAttribute('aria-expanded', 'false')
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    document.querySelectorAll('.card-menu.open').forEach((m) => m !== wrap && m.classList.remove('open'))
-    wrap.classList.toggle('open')
+    closeMenus(wrap)
+    setMenuOpen(wrap, !wrap.classList.contains('open'))
   })
 
   const pop = document.createElement('div')
   pop.className = 'card-menu-pop'
+  pop.setAttribute('role', 'menu')
   pop.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
   })
 
   pop.appendChild(menuItem('Move to...', () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     showMoveDialog(f)
   }))
   pop.appendChild(menuItem('Duplicate', async () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     await duplicateFile(f)
   }))
   pop.appendChild(menuItem('Rename...', async () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     await renameFile(f)
   }))
   pop.appendChild(menuItem('Delete', async () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     await deleteFile(f)
   }, 'danger'))
 
@@ -364,27 +373,30 @@ function buildFolderMenu(dir, fileCount) {
   btn.textContent = '...'
   btn.title = 'Folder actions'
   btn.setAttribute('aria-label', `Actions for folder ${dir}`)
+  btn.setAttribute('aria-haspopup', 'menu')
+  btn.setAttribute('aria-expanded', 'false')
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    document.querySelectorAll('.card-menu.open').forEach((m) => m !== wrap && m.classList.remove('open'))
-    wrap.classList.toggle('open')
+    closeMenus(wrap)
+    setMenuOpen(wrap, !wrap.classList.contains('open'))
   })
 
   const pop = document.createElement('div')
   pop.className = 'card-menu-pop'
+  pop.setAttribute('role', 'menu')
   pop.addEventListener('click', (e) => e.stopPropagation())
 
   pop.appendChild(menuItem('+ Add design here', () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     createDesignInFolder(dir)
   }))
   pop.appendChild(menuItem('Rename folder...', async () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     await renameFolder(dir)
   }))
   pop.appendChild(menuItem('Delete empty folder', async () => {
-    wrap.classList.remove('open')
+    setMenuOpen(wrap, false)
     await deleteFolder(dir, fileCount)
   }, 'danger'))
 
@@ -440,8 +452,20 @@ function menuItem(label, handler, extraCls = '') {
   const b = document.createElement('button')
   b.className = 'menu-item' + (extraCls ? ' ' + extraCls : '')
   b.textContent = label
+  b.setAttribute('role', 'menuitem')
   b.addEventListener('click', handler)
   return b
+}
+
+function closeMenus(except = null) {
+  document.querySelectorAll('.card-menu.open').forEach((m) => {
+    if (m !== except) setMenuOpen(m, false)
+  })
+}
+
+function setMenuOpen(menu, open) {
+  menu.classList.toggle('open', open)
+  menu.querySelector('.card-menu-btn')?.setAttribute('aria-expanded', String(open))
 }
 
 function showMoveDialog(f) {
@@ -587,12 +611,13 @@ function confirmDialog({ title, message, confirmText = 'OK', danger = false }) {
 }
 
 function createModal({ title, body, footer, restoreFocus }) {
+  const id = `modal-${++modalSeq}`
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-head" id="modal-title">${escapeHtml(title)}</div>
-      <div class="modal-body">${body}</div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${id}-title" aria-describedby="${id}-body">
+      <div class="modal-head" id="${id}-title">${escapeHtml(title)}</div>
+      <div class="modal-body" id="${id}-body">${body}</div>
       <div class="modal-foot">${footer}</div>
     </div>
   `
@@ -606,10 +631,27 @@ function createModal({ title, body, footer, restoreFocus }) {
     if (e.key === 'Escape') {
       e.preventDefault()
       cancel()
+    } else if (e.key === 'Tab') {
+      trapModalFocus(overlay, e)
     }
   })
   document.body.appendChild(overlay)
   return overlay
+}
+
+function trapModalFocus(overlay, e) {
+  const focusable = [...overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && el.offsetParent !== null)
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
 }
 
 function closeModal(overlay, restoreFocus) {
@@ -626,6 +668,12 @@ function toast(message, state = 'error') {
   }
   const el = document.createElement('div')
   el.className = `toast ${state}`
+  if (state === 'error') {
+    el.setAttribute('role', 'alert')
+  } else {
+    el.setAttribute('role', 'status')
+    el.setAttribute('aria-live', 'polite')
+  }
   el.textContent = message
   wrap.appendChild(el)
   setTimeout(() => el.remove(), state === 'error' ? 5200 : 2600)
